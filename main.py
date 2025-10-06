@@ -1,27 +1,20 @@
-import logging
-import sqlite3
+import telebot
+from telebot import types
 import requests
-import schedule
+from bs4 import BeautifulSoup
+import sqlite3
 import time
+import schedule
 import threading
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+import re
 
-# Настройка логирования
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-# Конфигурация
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-GGSELL_API_KEY = "YOUR_GGSELL_API_KEY"
+# Инициализация бота
+bot = telebot.TeleBot('8406426014:AAHSvck3eXH6p8J34q7HID2A-ZoPXfaHbag')
 
 # Инициализация базы данных
 def init_db():
-    conn = sqlite3.connect('ggsell_monitor.db')
+    conn = sqlite3.connect('yandex_market.db')
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -40,7 +33,6 @@ def init_db():
             user_id INTEGER,
             product_name TEXT,
             product_url TEXT,
-            product_id TEXT,
             target_price REAL,
             current_price REAL,
             last_check TIMESTAMP,
@@ -64,7 +56,7 @@ def init_db():
 
 # Регистрация пользователя
 def register_user(user_id, username, first_name, last_name):
-    conn = sqlite3.connect('ggsell_monitor.db')
+    conn = sqlite3.connect('yandex_market.db')
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -75,284 +67,266 @@ def register_user(user_id, username, first_name, last_name):
     conn.commit()
     conn.close()
 
-# Получение информации о товаре с GGSell
-def get_ggsell_product_info(product_url):
-    """
-    Функция для получения информации о товаре с GGSell
-    """
-    try:
-        # Извлекаем ID товара из URL
-        product_id = extract_product_id_from_url(product_url)
-        
-        if not product_id:
-            return None
-        
-        # Здесь должен быть запрос к API GGSell
-        # Пример структуры API запроса (замените на реальный эндпоинт)
-        headers = {
-            'Authorization': f'Bearer {GGSELL_API_KEY}',
-            'User-Agent': 'PriceMonitorBot/1.0'
+# Упрощенный парсер Яндекс Маркета
+class SimpleYandexMarketParser:
+    def __init__(self):
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
         }
-        
-        # Предполагаемый формат API GGSell (нужно уточнить у разработчиков)
-        api_url = f"https://api.ggsell.com/v1/products/{product_id}"
-        
-        response = requests.get(api_url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
+    
+    def search_products(self, query, max_results=5):
+        """
+        Упрощенный поиск товаров на Яндекс Маркете
+        """
+        try:
+            # Кодируем запрос для URL
+            encoded_query = requests.utils.quote(query)
+            url = f"https://market.yandex.ru/"
             
-            return {
-                'name': data.get('name', 'Неизвестный товар'),
-                'price': float(data.get('price', 0)),
-                'original_price': float(data.get('original_price', 0)),
-                'discount': data.get('discount', 0),
-                'available': data.get('in_stock', False),
-                'rating': data.get('rating', 0),
-                'image_url': data.get('image', ''),
-                'category': data.get('category', '')
-            }
-        else:
-            # Если API недоступно, используем парсинг страницы
-            return parse_ggsell_page(product_url)
+            response = requests.get(url, headers=self.headers, timeout=15)
+            response.raise_for_status()
             
-    except Exception as e:
-        logger.error(f"Ошибка получения информации о товаре с GGSell: {e}")
-        return None
+            # Используем встроенный html.parser вместо lxml
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Демо-данные (в реальном боте нужно настроить правильные селекторы)
+            return self.get_demo_products(query, max_results)
+            
+        except Exception as e:
+            print(f"Ошибка поиска товаров: {e}")
+            return self.get_demo_products(query, max_results)
+    
+    def get_demo_products(self, query, max_results):
+        """Демо-данные для тестирования"""
+        demo_products = []
+        base_price = 1000
+        
+        for i in range(max_results):
+            demo_products.append({
+                'name': f'{query} - Модель {i+1}',
+                'price': base_price * (i + 1),
+                'rating': round(4.0 + i * 0.2, 1),
+                'reviews': (i + 1) * 10,
+                'link': f'https://market.yandex.ru/product/demo-{i+1}',
+                'image': ''
+            })
+        
+        return demo_products
+    
+    def get_product_price(self, product_url):
+        """
+        Получение текущей цены товара (демо-версия)
+        """
+        try:
+            # В реальном боте здесь должен быть парсинг
+            # Для демо возвращаем случайную цену
+            import random
+            return random.randint(500, 5000)
+            
+        except Exception as e:
+            print(f"Ошибка получения цены: {e}")
+            return 0
 
-def extract_product_id_from_url(url):
-    """
-    Извлекает ID товара из URL GGSell
-    Примеры URL:
-    - https://ggsell.ru/product/12345
-    - https://ggsell.com/game/abc-def-123
-    """
-    try:
-        # Убираем параметры запроса
-        url = url.split('?')[0]
-        
-        # Разделяем URL по слешам
-        parts = url.rstrip('/').split('/')
-        
-        # ID товара обычно последняя часть URL
-        product_id = parts[-1]
-        
-        return product_id if product_id else None
-    except Exception as e:
-        logger.error(f"Ошибка извлечения ID из URL: {e}")
-        return None
-
-def parse_ggsell_page(url):
-    """
-    Парсинг страницы товара GGSell (запасной метод)
-    """
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            # Здесь нужно добавить парсинг конкретных элементов страницы
-            # Это пример - нужно адаптировать под реальную структуру GGSell
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Пример поиска элементов (нужно уточнить селекторы)
-            name_elem = soup.find('h1') or soup.find('title')
-            price_elem = soup.find('span', class_='price') or soup.find('meta', itemprop='price')
-            
-            name = name_elem.get_text().strip() if name_elem else 'Товар GGSell'
-            
-            # Извлекаем цену
-            price = 0
-            if price_elem:
-                price_text = price_elem.get('content') or price_elem.get_text()
-                # Убираем все нечисловые символы кроме точки
-                import re
-                price_match = re.search(r'(\d+[.,]?\d*)', price_text)
-                if price_match:
-                    price = float(price_match.group(1).replace(',', '.'))
-            
-            return {
-                'name': name,
-                'price': price,
-                'available': True,
-                'rating': 0
-            }
-        else:
-            return None
-            
-    except Exception as e:
-        logger.error(f"Ошибка парсинга страницы GGSell: {e}")
-        return None
+# Создаем парсер
+parser = SimpleYandexMarketParser()
 
 # Команда /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
+@bot.message_handler(commands=['start', 'main', 'hello'])
+def send_welcome(message):
+    user = message.from_user
     register_user(user.id, user.username, user.first_name, user.last_name)
     
     welcome_text = f"""
-🎮 Привет, {user.first_name}!
+🎉 Привет, {user.first_name}!
 
-Я бот для мониторинга цен на GGSell - магазине игр и софта.
+Я бот для мониторинга цен на Яндекс Маркете.
 
-📊 Возможности:
-• Отслеживание цен на игры и программы
-• Уведомления при изменении цены
-• Слежение за скидками
-• История цен
-• Настройка целевой цены
+📊 Что я умею:
+• Искать товары на Яндекс Маркете
+• Отслеживать изменение цен
+• Уведомлять о скидках
+• Показывать историю цен
 
-📝 Команды:
-/start - Начало работы
-/add_product - Добавить товар для отслеживания
+🎯 Основные команды:
+/search - Найти товар
+/add - Добавить товар для отслеживания
 /my_products - Мои товары
-/check_prices - Проверить цены сейчас
+/check - Проверить цены
 /help - Помощь
 
-🎯 Добавьте первую игру командой /add_product
+💡 Начните с команды /search чтобы найти товар!
+
+⚠️ Сейчас работает демо-режим с тестовыми данными.
     """
     
-    await update.message.reply_text(welcome_text)
+    bot.send_message(message.chat.id, welcome_text)
+    show_main_menu(message)
+
+def show_main_menu(message):
+    """Показать главное меню"""
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn1 = types.KeyboardButton('🔍 Поиск товара')
+    btn2 = types.KeyboardButton('📊 Мои товары')
+    btn3 = types.KeyboardButton('🔄 Проверить цены')
+    btn4 = types.KeyboardButton('ℹ️ Помощь')
+    markup.add(btn1, btn2)
+    markup.add(btn3, btn4)
+    
+    bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup)
 
 # Команда /help
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@bot.message_handler(commands=['help'])
+def send_help(message):
     help_text = """
 📋 Доступные команды:
 
-/add_product - Добавить товар для отслеживания
-/my_products - Показать мои товары
-/check_prices - Проверить цены сейчас
-/settings - Настройки уведомлений
-/help - Эта справка
+🔍 /search - Поиск товаров на Яндекс Маркете
+📝 /add - Добавить товар для отслеживания
+📊 /my_products - Показать отслеживаемые товары
+🔄 /check - Проверить актуальные цены
 
-🔍 Как добавить товар:
-1. Найти игру/программу на GGSell
-2. Скопировать ссылку на товар
-3. Использовать команду /add_product
-4. Вставить ссылку и указать желаемую цену
+🔎 Как использовать:
+1. Используйте /search для поиска товара
+2. Скопируйте ссылку на понравившийся товар
+3. Используйте /add чтобы добавить товар для отслеживания
+4. Укажите желаемую цену
+5. Получайте уведомления при изменении цены!
 
-🕐 Бот проверяет цены каждые 4 часа и уведомит вас, когда цена достигнет целевой.
+⏰ Бот проверяет цены автоматически каждые 6 часов.
 
-🎮 Поддерживаемые товары:
-• Игры для PC, PlayStation, Xbox
-• Игровые ключи
-• Программное обеспечение
-• Подписки
+⚠️ Внимание: Сейчас работает демо-режим с тестовыми данными.
     """
-    await update.message.reply_text(help_text)
-
-# Команда /add_product
-async def add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🔗 Пришлите мне ссылку на товар с GGSell\n\n"
-        "Примеры:\n"
-        "• https://ggsell.ru/product/cyberpunk-2077\n"
-        "• https://ggsell.com/game/gta-v-premium\n"
-        "• https://ggsell.ru/software/windows-11-pro"
-    )
-    context.user_data['awaiting_url'] = True
-
-# Обработка сообщений с ссылками
-async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('awaiting_url'):
-        url = update.message.text
-        
-        if 'ggsell' not in url:
-            await update.message.reply_text("❌ Это не ссылка на GGSell. Попробуйте еще раз.")
-            return
-        
-        # Проверяем доступность товара
-        await update.message.reply_text("🔍 Проверяю товар...")
-        
-        product_info = get_ggsell_product_info(url)
-        
-        if not product_info:
-            await update.message.reply_text(
-                "❌ Не удалось получить информацию о товаре.\n"
-                "Проверьте ссылку или попробуйте позже."
-            )
-            context.user_data.clear()
-            return
-        
-        # Сохраняем информацию и запрашиваем целевую цену
-        context.user_data['product_url'] = url
-        context.user_data['product_info'] = product_info
-        context.user_data['awaiting_url'] = False
-        context.user_data['awaiting_price'] = True
-        
-        discount_text = ""
-        if product_info.get('original_price') and product_info['original_price'] > product_info['price']:
-            discount = ((product_info['original_price'] - product_info['price']) / product_info['original_price']) * 100
-            discount_text = f"\n🏷️ Скидка: {discount:.0f}% (было {product_info['original_price']} руб.)"
-        
-        availability = "✅ В наличии" if product_info.get('available', True) else "❌ Нет в наличии"
-        
-        await update.message.reply_text(
-            f"📦 Название: {product_info['name']}\n"
-            f"💰 Текущая цена: {product_info['price']} руб.{discount_text}\n"
-            f"📊 {availability}\n\n"
-            f"🎯 Укажите целевую цену (в рублях):\n"
-            f"Пример: 500 или 1499.99"
-        )
-
-# Обработка целевой цены
-async def handle_target_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('awaiting_price'):
-        try:
-            target_price = float(update.message.text)
-            
-            if target_price <= 0:
-                await update.message.reply_text("❌ Цена должна быть положительным числом. Попробуйте еще раз.")
-                return
-            
-            product_info = context.user_data['product_info']
-            product_url = context.user_data['product_url']
-            
-            # Сохраняем товар в базу данных
-            conn = sqlite3.connect('ggsell_monitor.db')
-            cursor = conn.cursor()
-            
-            product_id = extract_product_id_from_url(product_url)
-            
-            cursor.execute('''
-                INSERT INTO products (user_id, product_name, product_url, product_id, target_price, current_price, last_check)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                update.effective_user.id,
-                product_info['name'],
-                product_url,
-                product_id,
-                target_price,
-                product_info['price'],
-                datetime.now()
-            ))
-            
-            conn.commit()
-            conn.close()
-            
-            # Очищаем временные данные
-            context.user_data.clear()
-            
-            await update.message.reply_text(
-                f"✅ Товар успешно добавлен для отслеживания!\n\n"
-                f"🎮 {product_info['name']}\n"
-                f"💰 Текущая цена: {product_info['price']} руб.\n"
-                f"🎯 Целевая цена: {target_price} руб.\n\n"
-                f"📊 Бот будет уведомлять вас при изменении цены.\n"
-                f"Следующая проверка через 4 часа."
-            )
-            
-        except ValueError:
-            await update.message.reply_text("❌ Неверный формат цены. Введите число (например: 500 или 1499.99)")
-
-# Команда /my_products
-async def my_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     
-    conn = sqlite3.connect('ggsell_monitor.db')
+    bot.send_message(message.chat.id, help_text)
+
+# Обработка текстовых сообщений
+@bot.message_handler(content_types=['text'])
+def handle_text(message):
+    if message.text == '🔍 Поиск товара':
+        bot.send_message(message.chat.id, "Введите название товара для поиска:")
+        bot.register_next_step_handler(message, process_search_query)
+    
+    elif message.text == '📊 Мои товары':
+        show_user_products(message)
+    
+    elif message.text == '🔄 Проверить цены':
+        check_prices_now(message)
+    
+    elif message.text == 'ℹ️ Помощь':
+        send_help(message)
+    
+    else:
+        bot.send_message(message.chat.id, "Используйте кнопки меню или команды")
+
+# Поиск товаров
+@bot.message_handler(commands=['search'])
+def search_products(message):
+    bot.send_message(message.chat.id, "🔍 Введите название товара для поиска на Яндекс Маркете:")
+    bot.register_next_step_handler(message, process_search_query)
+
+def process_search_query(message):
+    query = message.text
+    if len(query) < 2:
+        bot.send_message(message.chat.id, "❌ Слишком короткий запрос. Попробуйте еще раз.")
+        return
+    
+    bot.send_message(message.chat.id, "🔎 Ищу товары...")
+    
+    products = parser.search_products(query, max_results=5)
+    
+    if not products:
+        bot.send_message(message.chat.id, "❌ Товары не найдены. Попробуйте другой запрос.")
+        return
+    
+    # Отправляем найденные товары
+    for i, product in enumerate(products, 1):
+        product_text = format_product_info(product, i)
+        bot.send_message(message.chat.id, product_text, parse_mode='HTML')
+    
+    bot.send_message(message.chat.id, 
+                    "💡 Чтобы отслеживать товар, используйте команду /add")
+
+def format_product_info(product, number=1):
+    """Форматирование информации о товаре"""
+    rating_text = f"⭐ {product['rating']}" if product['rating'] > 0 else "⭐ Нет оценок"
+    reviews_text = f"📝 {product['reviews']} отзывов" if product['reviews'] > 0 else "📝 Нет отзывов"
+    
+    return f"""
+<b>Товар #{number}</b>
+🏷️ <b>{product['name']}</b>
+💰 <b>Цена: {product['price']:,} ₽</b>
+{rating_text} | {reviews_text}
+🔗 <a href="{product['link']}">Ссылка на товар</a>
+    """.replace(',', ' ')
+
+# Добавление товара для отслеживания
+@bot.message_handler(commands=['add'])
+def add_product(message):
+    bot.send_message(message.chat.id, 
+                    "🔗 Пришлите ссылку на товар с Яндекс Маркета\n\n"
+                    "Пример:\n"
+                    "https://market.yandex.ru/product/123456789\n\n"
+                    "Или название товара для демо:")
+    bot.register_next_step_handler(message, process_product_url)
+
+def process_product_url(message):
+    user_input = message.text.strip()
+    
+    # Если это ссылка
+    if 'market.yandex.ru' in user_input:
+        url = user_input
+        product_name = "Товар с Яндекс Маркета"
+    else:
+        # Если это название товара (демо-режим)
+        url = f"https://market.yandex.ru/product/demo-{hash(user_input) % 1000}"
+        product_name = user_input
+    
+    # Сохраняем URL и запрашиваем целевую цену
+    bot.send_message(message.chat.id, "💰 Укажите целевую цену (в рублях):\nПример: 5000")
+    bot.register_next_step_handler(message, process_target_price, url, product_name)
+
+def process_target_price(message, product_url, product_name):
+    try:
+        target_price = float(message.text.replace(' ', '').replace(',', '.'))
+        
+        if target_price <= 0:
+            bot.send_message(message.chat.id, "❌ Цена должна быть положительной. Попробуйте еще раз.")
+            return
+        
+        # Получаем текущую цену (демо)
+        current_price = parser.get_product_price(product_url)
+        
+        # Сохраняем в базу данных
+        conn = sqlite3.connect('yandex_market.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO products (user_id, product_name, product_url, target_price, current_price, last_check)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (message.from_user.id, product_name, product_url, target_price, current_price, datetime.now()))
+        
+        conn.commit()
+        conn.close()
+        
+        bot.send_message(message.chat.id,
+                        f"✅ Товар добавлен для отслеживания!\n\n"
+                        f"🏷️ {product_name}\n"
+                        f"🎯 Целевая цена: {target_price} ₽\n"
+                        f"💰 Текущая цена: {current_price} ₽\n"
+                        f"🔗 {product_url}\n\n"
+                        f"📊 Бот будет уведомлять вас при изменении цены!")
+        
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Неверный формат цены. Введите число (например: 5000)")
+
+# Показать товары пользователя
+@bot.message_handler(commands=['my_products'])
+def show_user_products(message):
+    user_id = message.from_user.id
+    
+    conn = sqlite3.connect('yandex_market.db')
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -366,246 +340,207 @@ async def my_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     
     if not products:
-        await update.message.reply_text(
-            "📭 У вас нет отслеживаемых товаров.\n"
-            "Используйте /add_product чтобы добавить игру или программу."
-        )
+        bot.send_message(message.chat.id, 
+                        "📭 У вас нет отслеживаемых товаров.\n"
+                        "Используйте команду /add чтобы добавить товар.")
         return
-    
-    message = "🎮 Ваши отслеживаемые товары:\n\n"
     
     for product in products:
         product_id, name, url, target_price, current_price, last_check = product
         
         status = "🎉 Цена достигнута!" if current_price <= target_price else "⏳ Ожидание"
-        price_diff = current_price - target_price
         
-        message += f"🆔 ID: {product_id}\n"
-        message += f"🎮 {name}\n"
-        message += f"💰 Текущая: {current_price} руб.\n"
-        message += f"🎯 Целевая: {target_price} руб.\n"
+        product_info = f"""
+<b>Товар #{product_id}</b>
+🏷️ {name}
+💰 Текущая цена: <b>{current_price:,} ₽</b>
+🎯 Целевая цена: <b>{target_price:,} ₽</b>
+📊 Статус: {status}
+📅 Последняя проверка: {last_check}
+🔗 <a href="{url}">Ссылка</a>
+        """.replace(',', ' ')
         
-        if current_price > target_price:
-            message += f"📈 Осталось: {price_diff:.0f} руб.\n"
+        # Создаем inline кнопки для управления
+        markup = types.InlineKeyboardMarkup()
+        btn_check = types.InlineKeyboardButton('🔄 Проверить сейчас', callback_data=f'check_{product_id}')
+        btn_delete = types.InlineKeyboardButton('❌ Удалить', callback_data=f'delete_{product_id}')
+        markup.add(btn_check, btn_delete)
         
-        message += f"📅 Последняя проверка: {last_check}\n"
-        message += f"📊 Статус: {status}\n"
-        message += "─" * 30 + "\n"
-    
-    # Добавляем кнопки управления
-    keyboard = [
-        [InlineKeyboardButton("🔄 Проверить цены сейчас", callback_data="check_prices")],
-        [InlineKeyboardButton("❌ Удалить товар", callback_data="delete_product")],
-        [InlineKeyboardButton("📊 Статистика", callback_data="stats")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(message, reply_markup=reply_markup)
-
-# Команда /check_prices
-async def check_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    await update.message.reply_text("🔍 Проверяю актуальные цены...")
-    await check_user_prices(user_id, context)
-    await update.message.reply_text("✅ Цены обновлены!")
+        bot.send_message(message.chat.id, product_info, parse_mode='HTML', reply_markup=markup)
 
 # Обработка callback запросов
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
+    if call.data.startswith('check_'):
+        product_id = int(call.data.split('_')[1])
+        check_single_product(call.message, product_id)
     
-    data = query.data
-    user_id = query.from_user.id
-    
-    if data == "check_prices":
-        await query.edit_message_text("🔍 Проверяю цены...")
-        await check_user_prices(user_id, context)
-        await query.edit_message_text("✅ Цены проверены и обновлены!")
-    
-    elif data == "delete_product":
-        await query.edit_message_text("Введите ID товара для удаления:")
-        context.user_data['awaiting_delete_id'] = True
-    
-    elif data == "stats":
-        await show_stats(query, user_id)
+    elif call.data.startswith('delete_'):
+        product_id = int(call.data.split('_')[1])
+        delete_product(call.message, product_id)
 
-# Показать статистику
-async def show_stats(query, user_id):
-    conn = sqlite3.connect('ggsell_monitor.db')
+def check_single_product(message, product_id):
+    """Проверка одного товара"""
+    conn = sqlite3.connect('yandex_market.db')
     cursor = conn.cursor()
     
-    cursor.execute('''
-        SELECT COUNT(*), 
-               SUM(CASE WHEN current_price <= target_price THEN 1 ELSE 0 END)
-        FROM products 
-        WHERE user_id = ? AND is_active = TRUE
-    ''', (user_id,))
+    cursor.execute('SELECT product_url, current_price, product_name FROM products WHERE id = ?', (product_id,))
+    product = cursor.fetchone()
     
-    total, reached = cursor.fetchone()
-    
-    cursor.execute('''
-        SELECT COUNT(DISTINCT DATE(last_check)) 
-        FROM products 
-        WHERE user_id = ?
-    ''', (user_id,))
-    
-    days_active = cursor.fetchone()[0]
+    if product:
+        product_url, old_price, product_name = product
+        new_price = parser.get_product_price(product_url)
+        
+        # Обновляем цену в базе
+        cursor.execute('''
+            UPDATE products 
+            SET current_price = ?, last_check = ?
+            WHERE id = ?
+        ''', (new_price, datetime.now(), product_id))
+        
+        conn.commit()
+        
+        bot.send_message(message.chat.id, 
+                        f"🏷️ {product_name}\n"
+                        f"💰 Цена обновлена!\n"
+                        f"📊 Было: {old_price} ₽\n"
+                        f"📈 Стало: {new_price} ₽")
     
     conn.close()
+
+def delete_product(message, product_id):
+    """Удаление товара из отслеживания"""
+    conn = sqlite3.connect('yandex_market.db')
+    cursor = conn.cursor()
     
-    stats_text = f"""
-📊 Ваша статистика:
-
-🎮 Всего товаров: {total}
-🎯 Цен достигнуто: {reached}
-📅 Дней активности: {days_active}
-
-💡 Совет: Добавляйте больше товаров для лучшего отслеживания!
-    """
+    cursor.execute('UPDATE products SET is_active = FALSE WHERE id = ?', (product_id,))
+    conn.commit()
+    conn.close()
     
-    await query.edit_message_text(stats_text)
+    bot.send_message(message.chat.id, "✅ Товар удален из отслеживания")
 
-# Проверка цен для конкретного пользователя
-async def check_user_prices(user_id, context):
-    conn = sqlite3.connect('ggsell_monitor.db')
+# Проверка всех цен
+@bot.message_handler(commands=['check'])
+def check_prices_now(message):
+    user_id = message.from_user.id
+    bot.send_message(message.chat.id, "🔍 Проверяю цены всех товаров...")
+    
+    conn = sqlite3.connect('yandex_market.db')
     cursor = conn.cursor()
     
     cursor.execute('''
-        SELECT id, product_url, product_name, target_price, current_price 
+        SELECT id, product_url, product_name, current_price, target_price
         FROM products 
         WHERE user_id = ? AND is_active = TRUE
     ''', (user_id,))
     
     products = cursor.fetchall()
     
-    updates = []
-    
+    updated_count = 0
     for product in products:
-        product_id, url, name, target_price, old_price = product
+        product_id, url, name, old_price, target_price = product
+        new_price = parser.get_product_price(url)
         
-        # Получаем актуальную цену
-        product_info = get_ggsell_product_info(url)
-        
-        if product_info:
-            new_price = product_info['price']
-            
-            # Обновляем текущую цену
+        if new_price > 0 and new_price != old_price:
+            # Обновляем цену
             cursor.execute('''
                 UPDATE products 
                 SET current_price = ?, last_check = ?
                 WHERE id = ?
             ''', (new_price, datetime.now(), product_id))
             
-            # Сохраняем в историю
-            cursor.execute('''
-                INSERT INTO price_history (product_id, price)
-                VALUES (?, ?)
-            ''', (product_id, new_price))
+            updated_count += 1
             
-            # Проверяем изменение цены
-            price_changed = abs(new_price - old_price) > 0.01
-            
-            # Проверяем, достигнута ли целевая цена
-            target_reached = new_price <= target_price and old_price > target_price
-            
-            if price_changed or target_reached:
-                updates.append({
-                    'name': name,
-                    'old_price': old_price,
-                    'new_price': new_price,
-                    'target_price': target_price,
-                    'target_reached': target_reached,
-                    'url': url
-                })
+            # Отправляем уведомление об изменении цены
+            if new_price <= target_price:
+                bot.send_message(message.chat.id,
+                                f"🎉 ЦЕЛЕВАЯ ЦЕНА ДОСТИГНУТА!\n\n"
+                                f"🏷️ {name}\n"
+                                f"💰 Новая цена: {new_price} ₽\n"
+                                f"🎯 Цель: {target_price} ₽")
+            else:
+                bot.send_message(message.chat.id,
+                                f"📈 ИЗМЕНЕНИЕ ЦЕНЫ\n\n"
+                                f"🏷️ {name}\n"
+                                f"📉 Было: {old_price} ₽\n"
+                                f"📈 Стало: {new_price} ₽")
     
     conn.commit()
     conn.close()
     
-    # Отправляем уведомления об изменениях
-    for update_info in updates:
-        try:
-            if update_info['target_reached']:
-                message = f"""
-🎉 ЦЕЛЕВАЯ ЦЕНА ДОСТИГНУТА!
+    if updated_count == 0:
+        bot.send_message(message.chat.id, "✅ Все цены актуальны!")
+    else:
+        bot.send_message(message.chat.id, f"✅ Проверка завершена! Обновлено {updated_count} цен.")
 
-🎮 {update_info['name']}
-💰 Новая цена: {update_info['new_price']} руб.
-🎯 Ваша цель: {update_info['target_price']} руб.
-
-🛒 Скорее покупайте: {update_info['url']}
-                """
-            else:
-                message = f"""
-📈 ИЗМЕНЕНИЕ ЦЕНЫ
-
-🎮 {update_info['name']}
-📉 Было: {update_info['old_price']} руб.
-📈 Стало: {update_info['new_price']} руб.
-🎯 Цель: {update_info['target_price']} руб.
-
-🔗 {update_info['url']}
-                """
-            
-            await context.bot.send_message(chat_id=user_id, text=message)
-            
-        except Exception as e:
-            logger.error(f"Ошибка отправки уведомления: {e}")
-
-# Фоновая задача для проверки цен
-def background_price_checker(app):
+# Фоновая задача для автоматической проверки цен
+def background_price_checker():
     def job():
-        conn = sqlite3.connect('ggsell_monitor.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT DISTINCT user_id FROM products WHERE is_active = TRUE')
-        users = cursor.fetchall()
-        conn.close()
-        
-        for user in users:
-            user_id = user[0]
-            asyncio.run_coroutine_threadsafe(
-                check_user_prices(user_id, app),
-                app._loop
-            )
+        try:
+            conn = sqlite3.connect('yandex_market.db')
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT DISTINCT user_id FROM products WHERE is_active = TRUE')
+            users = cursor.fetchall()
+            
+            for user in users:
+                user_id = user[0]
+                
+                cursor.execute('''
+                    SELECT id, product_url, product_name, current_price, target_price
+                    FROM products 
+                    WHERE user_id = ? AND is_active = TRUE
+                ''', (user_id,))
+                
+                products = cursor.fetchall()
+                
+                for product in products:
+                    product_id, url, name, old_price, target_price = product
+                    new_price = parser.get_product_price(url)
+                    
+                    if new_price > 0 and new_price != old_price:
+                        # Обновляем цену
+                        cursor.execute('''
+                            UPDATE products 
+                            SET current_price = ?, last_check = ?
+                            WHERE id = ?
+                        ''', (new_price, datetime.now(), product_id))
+                        
+                        # Отправляем уведомление
+                        if new_price <= target_price:
+                            bot.send_message(user_id,
+                                            f"🎉 ЦЕЛЕВАЯ ЦЕНА ДОСТИГНУТА!\n\n"
+                                            f"🏷️ {name}\n"
+                                            f"💰 Новая цена: {new_price} ₽\n"
+                                            f"🎯 Цель: {target_price} ₽")
+                        else:
+                            bot.send_message(user_id,
+                                            f"📈 ИЗМЕНЕНИЕ ЦЕНЫ\n\n"
+                                            f"🏷️ {name}\n"
+                                            f"📉 Было: {old_price} ₽\n"
+                                            f"📈 Стало: {new_price} ₽")
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Ошибка в фоновой задаче: {e}")
     
-    # Запускаем проверку каждые 4 часа
-    schedule.every(4).hours.do(job)
+    # Запускаем проверку каждые 2 часа
+    schedule.every(2).hours.do(job)
     
     while True:
         schedule.run_pending()
         time.sleep(60)
 
-# Основная функция
-def main():
-    # Инициализация базы данных
-    init_db()
-    
-    # Создание приложения
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Добавление обработчиков
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("add_product", add_product))
-    application.add_handler(CommandHandler("my_products", my_products))
-    application.add_handler(CommandHandler("check_prices", check_prices))
-    
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_target_price))
-    
-    application.add_handler(CallbackQueryHandler(button_handler))
-    
-    # Запуск фоновой задачи для проверки цен
-    price_checker_thread = threading.Thread(
-        target=background_price_checker, 
-        args=(application,),
-        daemon=True
-    )
-    price_checker_thread.start()
-    
-    # Запуск бота
-    logger.info("GGSell Price Monitor Bot запущен...")
-    application.run_polling()
+# Запуск фоновой задачи
+def start_background_jobs():
+    thread = threading.Thread(target=background_price_checker, daemon=True)
+    thread.start()
 
+# Главная функция
 if __name__ == '__main__':
-    main()
+    print("🤖 Запуск бота мониторинга Яндекс Маркета...")
+    init_db()
+    start_background_jobs()
+    print("✅ Бот запущен! (Демо-режим)")
+    bot.infinity_polling()
