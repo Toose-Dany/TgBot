@@ -10,6 +10,16 @@ from datetime import datetime
 import re
 import json
 import urllib.parse
+import os
+import random
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
 
 # Инициализация бота
 bot = telebot.TeleBot('8406426014:AAHSvck3eXH6p8J34q7HID2A-ZoPXfaHbag')
@@ -69,72 +79,171 @@ def register_user(user_id, username, first_name, last_name):
     conn.commit()
     conn.close()
 
-# Реальный парсер Яндекс Маркета
+# Реальный парсер Яндекс Маркета с улучшенным парсингом
 class YandexMarketParser:
-    def __init__(self):
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        }
-        self.session = requests.Session()
-        self.session.headers.update(self.headers)
+    def __init__(self, headless=True):
+        self.headless = headless
+        self.driver = None
+        self.init_driver()
     
+    def init_driver(self):
+        """Инициализация Chrome драйвера с автоматической установкой"""
+        try:
+            print("🔄 Инициализация Chrome драйвера...")
+            
+            chrome_options = Options()
+            
+            if self.headless:
+                chrome_options.add_argument("--headless=new")
+            
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            chrome_options.add_argument("--window-size=1920,1080")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--disable-extensions")
+            chrome_options.add_argument("--disable-images")  # Ускоряет загрузку
+            
+            # Автоматическая установка ChromeDriver
+            service = Service(ChromeDriverManager().install())
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            print("✅ Chrome драйвер успешно инициализирован")
+            
+        except Exception as e:
+            print(f"❌ Ошибка инициализации Chrome драйвера: {e}")
+            self.driver = None
+    
+    def save_debug_screenshot(self, filename):
+        """Сохранить скриншот для отладки"""
+        if not self.driver:
+            return None
+            
+        debug_dir = "debug_pages"
+        if not os.path.exists(debug_dir):
+            os.makedirs(debug_dir)
+        
+        filepath = os.path.join(debug_dir, filename)
+        self.driver.save_screenshot(filepath)
+        print(f"📸 Сохранен скриншот: {filepath}")
+        return filepath
+    
+    def save_debug_html(self, filename):
+        """Сохранить HTML для отладки"""
+        if not self.driver:
+            return None
+            
+        debug_dir = "debug_pages"
+        if not os.path.exists(debug_dir):
+            os.makedirs(debug_dir)
+        
+        filepath = os.path.join(debug_dir, filename)
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(self.driver.page_source)
+        print(f"💾 Сохранен HTML: {filepath}")
+        return filepath
+
     def search_products(self, query, max_results=5):
         """
         Реальный поиск товаров на Яндекс Маркете
         """
+        if not self.driver:
+            return ["selenium_error"]
+        
         try:
-            # Кодируем запрос для URL
             encoded_query = urllib.parse.quote(query)
-            url = f"https://market.yandex.ru/search?text={encoded_query}"
+            url = f"https://market.yandex.ru/search?text={encoded_query}&how=aprice"
             
-            print(f" Ищу: {query}")
-            print(f" URL: {url}")
+            print(f"\n🔍 Начинаем реальный поиск: '{query}'")
+            print(f"🌐 URL: {url}")
             
-            response = self.session.get(url, timeout=15)
-            response.raise_for_status()
+            # Загружаем страницу
+            self.driver.get(url)
             
-            soup = BeautifulSoup(response.text, 'html.parser')
-            products = []
+            # Ждем загрузки страницы
+            time.sleep(8)
             
-            # Поиск карточек товаров - основные селекторы Яндекс Маркета
+            # Сохраняем скриншот и HTML для отладки
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.save_debug_screenshot(f"search_{timestamp}_{query[:10]}.png")
+            self.save_debug_html(f"search_{timestamp}_{query[:10]}.html")
+            
+            # Проверяем на капчу
+            page_text = self.driver.page_source.lower()
+            if any(word in page_text for word in ['капча', 'captcha', 'робот', 'проверка']):
+                print("🚨 Обнаружена капча!")
+                return ["captcha"]
+            
+            # Прокручиваем страницу для загрузки всех товаров
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+            time.sleep(2)
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(3)
+            
+            # Парсим реальные товары
+            products = self.parse_real_products(max_results)
+            
+            print(f"✅ Найдено товаров: {len(products)}")
+            return products
+            
+        except Exception as e:
+            print(f"💥 Ошибка при реальном поиске: {e}")
+            return ["error"]
+
+    def parse_real_products(self, max_results):
+        """Парсинг реальных товаров с Яндекс Маркета"""
+        products = []
+        
+        try:
+            # Получаем весь HTML страницы
+            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+            
+            # Ищем карточки товаров - основные селекторы Яндекс Маркета 2024
             product_selectors = [
                 '[data-zone-name="snippet"]',
-                '.snippet-cell',
                 '[data-autotest-id="product-snippet"]',
-                '.snippet-horizontal'
+                '.snippet-cell',
+                '.snippet-horizontal',
+                'article[data-zone-name="snippet"]',
+                'div[data-zone-name="snippet"]'
             ]
             
             product_cards = []
             for selector in product_selectors:
-                product_cards = soup.select(selector)
-                if product_cards:
-                    print(f" Найдено карточек с селектором {selector}: {len(product_cards)}")
+                found_cards = soup.select(selector)
+                print(f"🔍 Селектор '{selector}': найдено {len(found_cards)} элементов")
+                if found_cards:
+                    product_cards = found_cards
                     break
             
+            # Если не нашли стандартными селекторами, ищем по структуре
             if not product_cards:
-                # Альтернативный поиск по классам
-                product_cards = soup.find_all('div', class_=lambda x: x and any(word in str(x).lower() for word in ['snippet', 'product', 'item']))
-                print(f" Альтернативный поиск: {len(product_cards)} карточек")
+                product_cards = soup.find_all('div', class_=lambda x: x and any(word in str(x).lower() for word in ['snippet', 'product', 'item', 'offer']))
+                print(f"🔍 Альтернативный поиск: {len(product_cards)} карточек")
             
-            for card in product_cards[:max_results]:
-                product = self.parse_product_card(card)
+            print(f"🛍 Всего найдено карточек: {len(product_cards)}")
+            
+            for i, card in enumerate(product_cards[:max_results]):
+                print(f"   Парсим карточку {i+1}...")
+                product = self.parse_product_card_advanced(card)
                 if product and product['name'] and product['price'] > 0:
                     products.append(product)
-                    print(f" Добавлен товар: {product['name']} - {product['price']} руб.")
+                    print(f"   ✅ Добавлен товар: {product['name'][:50]}... - {product['price']} руб.")
+                elif product:
+                    print(f"   ❌ Пропущен товар: нет названия или цены")
             
             return products
             
         except Exception as e:
-            print(f" Ошибка поиска товаров: {e}")
+            print(f"💥 Ошибка парсинга реальных товаров: {e}")
             return []
-    
-    def parse_product_card(self, card):
-        """Парсим реальную карточку товара"""
+
+    def parse_product_card_advanced(self, card):
+        """Улучшенный парсинг карточки товара"""
         try:
             product = {
                 'name': '',
@@ -150,16 +259,16 @@ class YandexMarketParser:
             name_selectors = [
                 'h3 a',
                 '.snippet-title a',
-                '[data-zone-name="title"]',
+                '[data-zone-name="title"] a',
+                'a[data-zone-name="title"]',
                 '.snippet-cell__title a',
-                'a[data-zone-name="title"]'
+                'a.snippet-title'
             ]
             
             for selector in name_selectors:
                 name_elem = card.select_one(selector)
                 if name_elem:
                     product['name'] = name_elem.get_text(strip=True)
-                    # Получаем ссылку из элемента названия
                     href = name_elem.get('href')
                     if href:
                         if href.startswith('//'):
@@ -169,26 +278,34 @@ class YandexMarketParser:
                         product['link'] = href
                     break
             
-            # Если название не нашли, попробуем другие селекторы
+            # Если название не нашли, ищем в других местах
             if not product['name']:
-                name_elem = card.find('h3') or card.find('a', {'data-zone-name': 'title'})
-                if name_elem:
-                    product['name'] = name_elem.get_text(strip=True)
+                # Ищем в data-атрибутах
+                name_data = card.get('data-zone-data')
+                if name_data:
+                    try:
+                        data = json.loads(name_data)
+                        if 'title' in data:
+                            product['name'] = data['title']
+                    except:
+                        pass
             
-            # Цена - основные селекторы цен
+            # Цена - ищем в различных местах
             price_selectors = [
                 '[data-zone-name="price"]',
                 '.snippet-price',
                 '.price',
                 '.snippet-cell__price',
-                '[automation-id="price"]'
+                '[automation-id="price"]',
+                '.snippet-price__text',
+                '.snippet-price__value'
             ]
             
             for selector in price_selectors:
                 price_elem = card.select_one(selector)
                 if price_elem:
                     price_text = price_elem.get_text(strip=True)
-                    # Извлекаем числа из цены
+                    # Ищем число в тексте цены
                     price_match = re.search(r'(\d[\d\s]*)', price_text.replace(' ', ''))
                     if price_match:
                         try:
@@ -196,6 +313,17 @@ class YandexMarketParser:
                             break
                         except ValueError:
                             continue
+            
+            # Если цена не найдена, ищем в data-атрибутах
+            if product['price'] == 0:
+                price_data = card.get('data-zone-data')
+                if price_data:
+                    try:
+                        data = json.loads(price_data)
+                        if 'price' in data:
+                            product['price'] = float(data['price'])
+                    except:
+                        pass
             
             # Рейтинг
             rating_selectors = [
@@ -250,39 +378,62 @@ class YandexMarketParser:
                     break
             
             # Изображение
-            img_elem = card.select_one('img')
-            if img_elem:
-                product['image'] = img_elem.get('src', '')
-                if product['image'].startswith('//'):
-                    product['image'] = 'https:' + product['image']
+            img_selectors = [
+                'img',
+                '.snippet-image img',
+                '[data-zone-name="picture"] img'
+            ]
             
+            for selector in img_selectors:
+                img_elem = card.select_one(selector)
+                if img_elem:
+                    src = img_elem.get('src') or img_elem.get('data-src')
+                    if src:
+                        if src.startswith('//'):
+                            src = 'https:' + src
+                        product['image'] = src
+                        break
+            
+            # Проверяем, что товар валидный
+            if not product['name'] or product['price'] == 0:
+                return None
+                
             return product
             
         except Exception as e:
-            print(f" Ошибка парсинга карточки: {e}")
+            print(f"💥 Ошибка парсинга карточки: {e}")
             return None
-    
+
     def get_product_price(self, product_url):
-        """
-        Получение текущей цены товара по ссылке
-        """
+        """Получение реальной цены товара по ссылке"""
+        if not self.driver:
+            return 0
+            
         try:
+            print(f"💰 Получаю реальную цену для: {product_url}")
+            
             if not product_url.startswith('http'):
                 product_url = 'https://market.yandex.ru' + product_url
             
-            print(f" Получаю цену для: {product_url}")
+            self.driver.get(product_url)
+            time.sleep(6)
             
-            response = self.session.get(product_url, timeout=15)
-            response.raise_for_status()
+            # Сохраняем для отладки
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.save_debug_screenshot(f"price_{timestamp}.png")
+            self.save_debug_html(f"price_{timestamp}.html")
             
-            soup = BeautifulSoup(response.text, 'html.parser')
+            # Парсим цену со страницы товара
+            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
             
-            # Ищем цену на странице товара
+            # Ищем цену в различных местах
             price_selectors = [
                 '[data-zone-name="price"]',
                 '.price',
                 '[automation-id="price"]',
-                '.snippet-price'
+                '.snippet-price',
+                '.product-price__value',
+                '.product-price__current'
             ]
             
             for selector in price_selectors:
@@ -292,18 +443,32 @@ class YandexMarketParser:
                     price_match = re.search(r'(\d[\d\s]*)', price_text.replace(' ', ''))
                     if price_match:
                         try:
-                            return float(price_match.group(1).replace(' ', ''))
+                            price = float(price_match.group(1).replace(' ', ''))
+                            print(f"✅ Найдена реальная цена: {price} руб.")
+                            return price
                         except ValueError:
                             continue
             
+            print("❌ Цена не найдена на странице товара")
             return 0
             
         except Exception as e:
-            print(f" Ошибка получения цены: {e}")
+            print(f"💥 Ошибка получения реальной цены: {e}")
             return 0
+    
+    def close(self):
+        """Закрыть браузер"""
+        if self.driver:
+            self.driver.quit()
+            print("✅ Браузер закрыт")
 
 # Создаем парсер
-parser = YandexMarketParser()
+try:
+    parser = YandexMarketParser(headless=True)
+    print("✅ Парсер инициализирован в РЕАЛЬНОМ режиме")
+except Exception as e:
+    print(f"❌ Ошибка инициализации парсера: {e}")
+    parser = None
 
 # Команда /start
 @bot.message_handler(commands=['start', 'main', 'hello'])
@@ -311,10 +476,14 @@ def send_welcome(message):
     user = message.from_user
     register_user(user.id, user.username, user.first_name, user.last_name)
     
+    status_text = "⚡ РЕАЛЬНЫЙ РЕЖИМ - работает настоящий поиск!" if parser and parser.driver else "⚠️ ДЕМО-РЕЖИМ - проблемы с браузером"
+    
     welcome_text = f"""
  Привет, {user.first_name}!
 
 Я бот для мониторинга цен на Яндекс Маркете.
+
+{status_text}
 
  Что я умею:
 • Искать товары на Яндекс Маркете
@@ -328,8 +497,9 @@ def send_welcome(message):
 /my_products - Мои товары
 /check - Проверить цены
 /help - Помощь
+/debug - Диагностика парсера
 
- Начните с команды /search чтобы найти товар!
+💡 Бот использует реальный браузер для поиска!
     """
     
     bot.send_message(message.chat.id, welcome_text)
@@ -342,21 +512,33 @@ def show_main_menu(message):
     btn2 = types.KeyboardButton('Мои товары')
     btn3 = types.KeyboardButton('Проверить цены')
     btn4 = types.KeyboardButton('Помощь')
+    btn5 = types.KeyboardButton('Диагностика')
     markup.add(btn1, btn2)
-    markup.add(btn3, btn4)
+    markup.add(btn3, btn4, btn5)
     
     bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup)
 
 # Команда /help
 @bot.message_handler(commands=['help'])
 def send_help(message):
-    help_text = """
+    status_text = "⚡ РЕАЛЬНЫЙ РЕЖИМ" if parser and parser.driver else "⚠️ ДЕМО-РЕЖИМ"
+    
+    help_text = f"""
 Доступные команды:
 
 /search - Поиск товаров на Яндекс Маркете
 /add - Добавить товар для отслеживания
 /my_products - Показать отслеживаемые товары
 /check - Проверить актуальные цены
+/debug - Диагностика парсера
+
+{status_text}
+
+⚡ Реальный парсинг через Selenium:
+• Находит настоящие товары
+• Получает актуальные цены
+• Показывает рейтинги и отзывы
+• Сохраняет скриншоты для отладки
 
 Как использовать:
 1. Используйте /search для поиска товара
@@ -369,6 +551,58 @@ def send_help(message):
     """
     
     bot.send_message(message.chat.id, help_text)
+
+# Команда диагностики
+@bot.message_handler(commands=['debug'])
+def debug_parser(message):
+    """Диагностика работы парсера"""
+    bot.send_message(message.chat.id, "🔧 Запускаю диагностику реального парсера...")
+    
+    if not parser or not parser.driver:
+        bot.send_message(message.chat.id, 
+                       "❌ Selenium не доступен\n"
+                       "💡 Проверьте установку Chrome и ChromeDriver")
+        return
+    
+    bot.send_message(message.chat.id, 
+                   "✅ Selenium доступен\n"
+                   "🌐 Браузер запущен\n"
+                   "🔍 Тестируем реальный поиск...")
+    
+    # Тестовый запрос
+    test_queries = ["iPhone 15", "ноутбук Asus", "телевизор Samsung"]
+    
+    for query in test_queries:
+        bot.send_message(message.chat.id, f"🔍 Тестируем реальный поиск: '{query}'")
+        
+        products = parser.search_products(query, max_results=2)
+        
+        if isinstance(products, list) and len(products) > 0 and isinstance(products[0], str):
+            error_msg = products[0]
+            if error_msg == "captcha":
+                bot.send_message(message.chat.id, 
+                               f"❌ '{query}': Обнаружена капча\n\n"
+                               "📸 Скриншот сохранен в debug_pages/")
+            elif error_msg == "selenium_error":
+                bot.send_message(message.chat.id, f"❌ '{query}': Ошибка Selenium")
+            else:
+                bot.send_message(message.chat.id, f"❌ '{query}': Ошибка - {error_msg}")
+        elif products:
+            bot.send_message(message.chat.id, f"✅ '{query}': Найдено {len(products)} реальных товаров")
+            for product in products[:1]:
+                price_text = f"{product['price']} руб." if product['price'] > 0 else "цена не найдена"
+                rating_text = f", рейтинг: {product['rating']}" if product['rating'] > 0 else ""
+                bot.send_message(message.chat.id, 
+                               f"Пример: {product['name'][:60]}...\nЦена: {price_text}{rating_text}")
+        else:
+            bot.send_message(message.chat.id, f"❌ '{query}': Товары не найдены")
+        
+        time.sleep(3)
+    
+    bot.send_message(message.chat.id, 
+                    "📊 Диагностика завершена.\n"
+                    "📸 Скриншоты и HTML сохранены в папке debug_pages/\n"
+                    "👀 Вы можете посмотреть что видит браузер!")
 
 # Обработка текстовых сообщений
 @bot.message_handler(content_types=['text'])
@@ -386,6 +620,9 @@ def handle_text(message):
     elif message.text == 'Помощь':
         send_help(message)
     
+    elif message.text == 'Диагностика':
+        debug_parser(message)
+    
     else:
         bot.send_message(message.chat.id, "Используйте кнопки меню или команды")
 
@@ -401,18 +638,40 @@ def process_search_query(message):
         bot.send_message(message.chat.id, "Слишком короткий запрос. Попробуйте еще раз.")
         return
     
-    bot.send_message(message.chat.id, f"Ищу '{query}' на Яндекс Маркете... Это может занять до 30 секунд.")
+    if not parser or not parser.driver:
+        bot.send_message(message.chat.id, 
+                       "❌ Парсер не доступен. Используйте /debug для диагностики.")
+        return
+    
+    bot.send_message(message.chat.id, f"🔍 Ищу '{query}' на Яндекс Маркете...\n⚡ Использую реальный браузер...")
     
     try:
         products = parser.search_products(query, max_results=5)
         
+        # Обработка специальных случаев
+        if isinstance(products, list) and products and isinstance(products[0], str):
+            error_type = products[0]
+            if error_type == "captcha":
+                bot.send_message(message.chat.id, 
+                               "⚠️ Обнаружена капча!\n\n"
+                               "📸 Скриншот сохранен в debug_pages/\n"
+                               "🔄 Попробуйте позже или используйте другой запрос")
+                return
+            elif error_type == "selenium_error":
+                bot.send_message(message.chat.id, "❌ Ошибка браузера. Используйте /debug")
+                return
+            else:
+                bot.send_message(message.chat.id, f"❌ Ошибка поиска: {error_type}")
+                return
+        
         if not products:
             bot.send_message(message.chat.id, 
-                           "Товары не найдены или произошла ошибка парсинга.\n"
-                           "Попробуйте:\n"
-                           "• Другой запрос\n"
-                           "• Более конкретное название\n"
-                           "• Подождать несколько минут")
+                           "❌ Товары не найдены.\n\n"
+                           "Возможные причины:\n"
+                           "• Неправильный запрос\n"
+                           "• Проблемы с сайтом\n"
+                           "• Блокировка\n"
+                           "📸 Скриншоты сохранены для анализа")
             return
         
         # Отправляем найденные товары
@@ -424,7 +683,8 @@ def process_search_query(message):
                 try:
                     bot.send_photo(message.chat.id, product['image'], 
                                  caption=product_text, parse_mode='HTML')
-                except:
+                except Exception as e:
+                    print(f"Ошибка отправки фото: {e}")
                     bot.send_message(message.chat.id, product_text, parse_mode='HTML')
             else:
                 bot.send_message(message.chat.id, product_text, parse_mode='HTML')
@@ -433,26 +693,30 @@ def process_search_query(message):
                         "💡 Чтобы отслеживать товар, скопируйте ссылку и используйте команду /add")
         
     except Exception as e:
-        bot.send_message(message.chat.id, f"Произошла ошибка при поиске: {str(e)}")
+        bot.send_message(message.chat.id, f"💥 Произошла ошибка при поиске: {str(e)}")
 
 def format_product_info(product, number=1):
     """Форматирование информации о товаре"""
-    rating_text = f"{product['rating']}" if product['rating'] > 0 else "Нет оценок"
-    reviews_text = f"{product['reviews']} отзывов" if product['reviews'] > 0 else "Нет отзывов"
-    shop_text = f"{product['shop']}" if product.get('shop') else "Магазин не указан"
+    rating_text = f"⭐ {product['rating']}" if product['rating'] > 0 else "⭐ Нет оценок"
+    reviews_text = f"📝 {product['reviews']} отзывов" if product['reviews'] > 0 else "📝 Нет отзывов"
+    shop_text = f"🏪 {product['shop']}" if product.get('shop') else "🏪 Магазин не указан"
     
     return f"""
 <b>Товар #{number}</b>
 <b>{product['name']}</b>
-<b>Цена: {product['price']:,} ₽</b>
+💰 <b>Цена: {product['price']:,} ₽</b>
 {rating_text} | {reviews_text}
 {shop_text}
-<a href="{product['link']}">Ссылка на товар</a>
+🔗 <a href="{product['link']}">Ссылка на товар</a>
     """.replace(',', ' ')
 
 # Добавление товара для отслеживания
 @bot.message_handler(commands=['add'])
 def add_product(message):
+    if not parser or not parser.driver:
+        bot.send_message(message.chat.id, "❌ Парсер не доступен. Используйте /debug для диагностики.")
+        return
+        
     bot.send_message(message.chat.id, 
                     "Пришлите ссылку на товар с Яндекс Маркета\n\n"
                     "Пример:\n"
@@ -469,26 +733,27 @@ def process_product_url(message):
         return
     
     # Получаем информацию о товаре
-    bot.send_message(message.chat.id, "Получаю информацию о товаре...")
+    bot.send_message(message.chat.id, "⚡ Получаю информацию о товаре через реальный браузер...")
     
     current_price = parser.get_product_price(url)
     
     if current_price == 0:
         bot.send_message(message.chat.id, 
-                        "Не удалось получить цену товара.\n"
+                        "❌ Не удалось получить цену товара.\n\n"
                         "Возможные причины:\n"
                         "• Товар временно недоступен\n"
                         "• Изменилась структура сайта\n"
-                        "• Проблемы с подключением")
+                        "• Капча или блокировка\n"
+                        "📸 Скриншот сохранен для анализа")
         return
     
-    # Получаем название товара из страницы
+    # Получаем название товара
     product_name = f"Товар с Яндекс Маркета ({current_price} руб.)"
     
     # Сохраняем URL и запрашиваем целевую цену
     bot.send_message(message.chat.id, 
-                    f"Текущая цена: {current_price} ₽\n\n"
-                    f"Укажите целевую цену (в рублях):\n"
+                    f"💰 Текущая цена: {current_price} ₽\n\n"
+                    f"🎯 Укажите целевую цену (в рублях):\n"
                     f"Пример: 5000")
     bot.register_next_step_handler(message, process_target_price, url, product_name, current_price)
 
@@ -512,22 +777,18 @@ def process_target_price(message, product_url, product_name, current_price):
         conn.commit()
         conn.close()
         
-        status = "Уже достигнута!" if current_price <= target_price else "Ожидание"
+        status = "🎉 Уже достигнута!" if current_price <= target_price else "⏳ Ожидание"
         
         bot.send_message(message.chat.id,
-                        f"Товар добавлен для отслеживания!\n\n"
+                        f"✅ Товар добавлен для отслеживания!\n\n"
                         f"{product_name}\n"
-                        f"Текущая цена: {current_price} ₽\n"
-                        f"Целевая цена: {target_price} ₽\n"
-                        f"Статус: {status}\n"
-                        f"{product_url}\n\n"
+                        f"💰 Текущая цена: {current_price} ₽\n"
+                        f"🎯 Целевая цена: {target_price} ₽\n"
+                        f"📊 Статус: {status}\n\n"
                         f"Бот будет уведомлять вас при изменении цены!")
         
     except ValueError:
         bot.send_message(message.chat.id, "Неверный формат цены. Введите число (например: 5000)")
-
-# Остальные функции остаются такими же как в предыдущем коде
-# (show_user_products, handle_callback, check_single_product, delete_product, check_prices_now)
 
 # Показать товары пользователя
 @bot.message_handler(commands=['my_products'])
@@ -556,22 +817,22 @@ def show_user_products(message):
     for product in products:
         product_id, name, url, target_price, current_price, last_check = product
         
-        status = "Цена достигнута!" if current_price <= target_price else "Ожидание"
+        status = "🎉 Цена достигнута!" if current_price <= target_price else "⏳ Ожидание"
         
         product_info = f"""
 <b>Товар #{product_id}</b>
 {name}
-Текущая цена: <b>{current_price:,} ₽</b>
-Целевая цена: <b>{target_price:,} ₽</b>
-Статус: {status}
-Последняя проверка: {last_check}
-<a href="{url}">Ссылка</a>
+💰 Текущая цена: <b>{current_price:,} ₽</b>
+🎯 Целевая цена: <b>{target_price:,} ₽</b>
+📊 Статус: {status}
+🕒 Последняя проверка: {last_check}
+🔗 <a href="{url}">Ссылка</a>
         """.replace(',', ' ')
         
         # Создаем inline кнопки для управления
         markup = types.InlineKeyboardMarkup()
-        btn_check = types.InlineKeyboardButton('Проверить сейчас', callback_data=f'check_{product_id}')
-        btn_delete = types.InlineKeyboardButton('Удалить', callback_data=f'delete_{product_id}')
+        btn_check = types.InlineKeyboardButton('🔄 Проверить сейчас', callback_data=f'check_{product_id}')
+        btn_delete = types.InlineKeyboardButton('❌ Удалить', callback_data=f'delete_{product_id}')
         markup.add(btn_check, btn_delete)
         
         bot.send_message(message.chat.id, product_info, parse_mode='HTML', reply_markup=markup)
@@ -597,6 +858,12 @@ def check_single_product(message, product_id):
     
     if product:
         product_url, old_price, product_name, target_price = product
+        
+        if not parser or not parser.driver:
+            bot.send_message(message.chat.id, "❌ Парсер не доступен.")
+            conn.close()
+            return
+            
         new_price = parser.get_product_price(product_url)
         
         if new_price > 0:
@@ -611,19 +878,24 @@ def check_single_product(message, product_id):
             
             if new_price <= target_price and old_price > target_price:
                 bot.send_message(message.chat.id,
-                                f"ЦЕЛЕВАЯ ЦЕНА ДОСТИГНУТА!\n\n"
+                                f"🎉 ЦЕЛЕВАЯ ЦЕНА ДОСТИГНУТА!\n\n"
                                 f"{product_name}\n"
-                                f"Новая цена: {new_price} ₽\n"
-                                f"Цель: {target_price} ₽\n"
-                                f"Было: {old_price} ₽")
+                                f"💰 Новая цена: {new_price} ₽\n"
+                                f"🎯 Цель: {target_price} ₽\n"
+                                f"📊 Было: {old_price} ₽")
+            elif new_price != old_price:
+                bot.send_message(message.chat.id, 
+                                f"📈 ИЗМЕНЕНИЕ ЦЕНЫ\n\n"
+                                f"{product_name}\n"
+                                f"📊 Было: {old_price} ₽\n"
+                                f"💰 Стало: {new_price} ₽")
             else:
                 bot.send_message(message.chat.id, 
+                                f"✅ Цена не изменилась\n\n"
                                 f"{product_name}\n"
-                                f"Цена обновлена!\n"
-                                f"Было: {old_price} ₽\n"
-                                f"Стало: {new_price} ₽")
+                                f"💰 Текущая цена: {new_price} ₽")
         else:
-            bot.send_message(message.chat.id, "Не удалось получить актуальную цену")
+            bot.send_message(message.chat.id, "❌ Не удалось получить актуальную цену")
     
     conn.close()
 
@@ -636,13 +908,18 @@ def delete_product(message, product_id):
     conn.commit()
     conn.close()
     
-    bot.send_message(message.chat.id, "Товар удален из отслеживания")
+    bot.send_message(message.chat.id, "✅ Товар удален из отслеживания")
 
 # Проверка всех цен
 @bot.message_handler(commands=['check'])
 def check_prices_now(message):
     user_id = message.from_user.id
-    bot.send_message(message.chat.id, "Проверяю цены всех товаров...")
+    
+    if not parser or not parser.driver:
+        bot.send_message(message.chat.id, "❌ Парсер не доступен. Используйте /debug для диагностики.")
+        return
+        
+    bot.send_message(message.chat.id, "🔍 Проверяю цены всех товаров...")
     
     conn = sqlite3.connect('yandex_market.db')
     cursor = conn.cursor()
@@ -655,7 +932,13 @@ def check_prices_now(message):
     
     products = cursor.fetchall()
     
+    if not products:
+        bot.send_message(message.chat.id, "У вас нет товаров для отслеживания.")
+        conn.close()
+        return
+    
     updated_count = 0
+    
     for product in products:
         product_id, url, name, old_price, target_price = product
         new_price = parser.get_product_price(url)
@@ -673,36 +956,47 @@ def check_prices_now(message):
             # Отправляем уведомление об изменении цены
             if new_price <= target_price:
                 bot.send_message(message.chat.id,
-                                f"ЦЕЛЕВАЯ ЦЕНА ДОСТИГНУТА!\n\n"
+                                f"🎉 ЦЕЛЕВАЯ ЦЕНА ДОСТИГНУТА!\n\n"
                                 f"{name}\n"
-                                f"Новая цена: {new_price} ₽\n"
-                                f"Цель: {target_price} ₽\n"
-                                f"{url}")
+                                f"💰 Новая цена: {new_price} ₽\n"
+                                f"🎯 Цель: {target_price} ₽\n"
+                                f"🔗 {url}")
             else:
                 bot.send_message(message.chat.id,
-                                f"ИЗМЕНЕНИЕ ЦЕНЫ\n\n"
+                                f"📈 ИЗМЕНЕНИЕ ЦЕНЫ\n\n"
                                 f"{name}\n"
-                                f"Было: {old_price} ₽\n"
-                                f"Стало: {new_price} ₽\n"
-                                f"{url}")
+                                f"📊 Было: {old_price} ₽\n"
+                                f"💰 Стало: {new_price} ₽\n"
+                                f"🔗 {url}")
+        
+        # Задержка между запросами
+        time.sleep(5)
     
     conn.commit()
     conn.close()
     
     if updated_count == 0:
-        bot.send_message(message.chat.id, "Все цены актуальны!")
+        bot.send_message(message.chat.id, "✅ Все цены актуальны!")
     else:
-        bot.send_message(message.chat.id, f"Проверка завершена! Обновлено {updated_count} цен.")
+        bot.send_message(message.chat.id, f"📊 Проверка завершена! Обновлено {updated_count} цен.")
 
 # Фоновая задача для автоматической проверки цен
 def background_price_checker():
     def job():
         try:
+            print(f"\n🕒 Автоматическая проверка цен: {datetime.now()}")
+            
+            if not parser or not parser.driver:
+                print("❌ Парсер не доступен для фоновой проверки")
+                return
+                
             conn = sqlite3.connect('yandex_market.db')
             cursor = conn.cursor()
             
             cursor.execute('SELECT DISTINCT user_id FROM products WHERE is_active = TRUE')
             users = cursor.fetchall()
+            
+            total_updated = 0
             
             for user in users:
                 user_id = user[0]
@@ -727,24 +1021,32 @@ def background_price_checker():
                             WHERE id = ?
                         ''', (new_price, datetime.now(), product_id))
                         
+                        total_updated += 1
+                        
                         # Отправляем уведомление
                         if new_price <= target_price:
                             bot.send_message(user_id,
-                                            f"ЦЕЛЕВАЯ ЦЕНА ДОСТИГНУТА!\n\n"
+                                            f"🎉 ЦЕЛЕВАЯ ЦЕНА ДОСТИГНУТА!\n\n"
                                             f"{name}\n"
-                                            f"Новая цена: {new_price} ₽\n"
-                                            f"Цель: {target_price} ₽")
+                                            f"💰 Новая цена: {new_price} ₽\n"
+                                            f"🎯 Цель: {target_price} ₽")
                         else:
                             bot.send_message(user_id,
-                                            f"ИЗМЕНЕНИЕ ЦЕНЫ\n\n"
+                                            f"📈 ИЗМЕНЕНИЕ ЦЕНЫ\n\n"
                                             f"{name}\n"
-                                            f"Было: {old_price} ₽\n"
-                                            f"Стало: {new_price} ₽")
+                                            f"📊 Было: {old_price} ₽\n"
+                                            f"💰 Стало: {new_price} ₽")
+                    
+                    # Задержка между запросами
+                    time.sleep(10)
             
             conn.commit()
             conn.close()
+            
+            print(f"✅ Автоматическая проверка завершена. Обновлено: {total_updated} цен")
+            
         except Exception as e:
-            print(f"Ошибка в фоновой задаче: {e}")
+            print(f"💥 Ошибка в фоновой задаче: {e}")
     
     # Запускаем проверку каждые 6 часов
     schedule.every(6).hours.do(job)
@@ -758,14 +1060,42 @@ def start_background_jobs():
     thread = threading.Thread(target=background_price_checker, daemon=True)
     thread.start()
 
+# Обработка завершения работы
+import atexit
+
+@atexit.register
+def cleanup():
+    """Очистка при завершении работы"""
+    print("🔄 Завершение работы...")
+    if parser:
+        parser.close()
+
 # Главная функция
 if __name__ == '__main__':
-    print("Запуск бота мониторинга Яндекс Маркета...")
+    print("🚀 Запуск бота мониторинга Яндекс Маркета...")
+    print("⚡ РЕАЛЬНЫЙ РЕЖИМ - настоящий парсинг через Selenium!")
+    print("📸 Скриншоты будут сохраняться в папку debug_pages/")
+    
+    # Создаем папку для отладки
+    if not os.path.exists("debug_pages"):
+        os.makedirs("debug_pages")
+    
     init_db()
     start_background_jobs()
-    print("Бот запущен! (Реальный парсинг)")
-    bot.infinity_polling()
-
-
-
-
+    
+    if parser and parser.driver:
+        print("✅ Бот запущен в РЕАЛЬНОМ режиме!")
+        print("🔍 Парсер готов к поиску товаров")
+    else:
+        print("⚠️ Бот запущен с ограниченным функционалом")
+        print("💡 Используйте /debug для диагностики")
+    
+    print("📝 Используйте команду /search для начала работы")
+    
+    try:
+        bot.infinity_polling()
+    except KeyboardInterrupt:
+        print("⏹ Остановка бота...")
+    finally:
+        if parser:
+            parser.close()
