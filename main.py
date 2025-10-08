@@ -26,7 +26,7 @@ bot = telebot.TeleBot('8406426014:AAHSvck3eXH6p8J34q7HID2A-ZoPXfaHbag')
 
 # Инициализация базы данных
 def init_db():
-    conn = sqlite3.connect('yandex_market.db')
+    conn = sqlite3.connect('ggsel_market.db')
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -68,7 +68,7 @@ def init_db():
 
 # Регистрация пользователя
 def register_user(user_id, username, first_name, last_name):
-    conn = sqlite3.connect('yandex_market.db')
+    conn = sqlite3.connect('ggsel_market.db')
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -79,8 +79,8 @@ def register_user(user_id, username, first_name, last_name):
     conn.commit()
     conn.close()
 
-# Реальный парсер Яндекс Маркета с улучшенным парсингом
-class YandexMarketParser:
+# Парсер для GGsel
+class GGselParser:
     def __init__(self, headless=True):
         self.headless = headless
         self.driver = None
@@ -89,7 +89,7 @@ class YandexMarketParser:
     def init_driver(self):
         """Инициализация Chrome драйвера с автоматической установкой"""
         try:
-            print("🔄 Инициализация Chrome драйвера...")
+            print("🔄 Инициализация Chrome драйвера для GGsel...")
             
             chrome_options = Options()
             
@@ -105,14 +105,14 @@ class YandexMarketParser:
             chrome_options.add_argument("--window-size=1920,1080")
             chrome_options.add_argument("--disable-gpu")
             chrome_options.add_argument("--disable-extensions")
-            chrome_options.add_argument("--disable-images")  # Ускоряет загрузку
+            chrome_options.add_argument("--disable-images")
             
             # Автоматическая установка ChromeDriver
             service = Service(ChromeDriverManager().install())
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
             
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            print("✅ Chrome драйвер успешно инициализирован")
+            print("✅ Chrome драйвер успешно инициализирован для GGsel")
             
         except Exception as e:
             print(f"❌ Ошибка инициализации Chrome драйвера: {e}")
@@ -123,7 +123,7 @@ class YandexMarketParser:
         if not self.driver:
             return None
             
-        debug_dir = "debug_pages"
+        debug_dir = "debug_pages_ggsel"
         if not os.path.exists(debug_dir):
             os.makedirs(debug_dir)
         
@@ -137,7 +137,7 @@ class YandexMarketParser:
         if not self.driver:
             return None
             
-        debug_dir = "debug_pages"
+        debug_dir = "debug_pages_ggsel"
         if not os.path.exists(debug_dir):
             os.makedirs(debug_dir)
         
@@ -149,67 +149,62 @@ class YandexMarketParser:
 
     def search_products(self, query, max_results=5):
         """
-        Реальный поиск товаров на Яндекс Маркете
+        Поиск товаров на GGsel
         """
         if not self.driver:
             return ["selenium_error"]
         
         try:
             encoded_query = urllib.parse.quote(query)
-            url = f"https://market.yandex.ru/search?text={encoded_query}&how=aprice"
+            url = f"https://ggsel.com/goods?search={encoded_query}"
             
-            print(f"\n🔍 Начинаем реальный поиск: '{query}'")
+            print(f"\n🔍 Начинаем поиск на GGsel: '{query}'")
             print(f"🌐 URL: {url}")
             
             # Загружаем страницу
             self.driver.get(url)
             
             # Ждем загрузки страницы
-            time.sleep(8)
+            time.sleep(5)
             
             # Сохраняем скриншот и HTML для отладки
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.save_debug_screenshot(f"search_{timestamp}_{query[:10]}.png")
-            self.save_debug_html(f"search_{timestamp}_{query[:10]}.html")
-            
-            # Проверяем на капчу
-            page_text = self.driver.page_source.lower()
-            if any(word in page_text for word in ['капча', 'captcha', 'робот', 'проверка']):
-                print("🚨 Обнаружена капча!")
-                return ["captcha"]
+            self.save_debug_screenshot(f"ggsel_search_{timestamp}_{query[:10]}.png")
+            self.save_debug_html(f"ggsel_search_{timestamp}_{query[:10]}.html")
             
             # Прокручиваем страницу для загрузки всех товаров
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
             time.sleep(2)
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(3)
+            time.sleep(2)
             
-            # Парсим реальные товары
-            products = self.parse_real_products(max_results)
+            # Парсим товары с GGsel
+            products = self.parse_ggsel_products(max_results)
             
-            print(f"✅ Найдено товаров: {len(products)}")
+            print(f"✅ Найдено товаров на GGsel: {len(products)}")
             return products
             
         except Exception as e:
-            print(f"💥 Ошибка при реальном поиске: {e}")
+            print(f"💥 Ошибка при поиске на GGsel: {e}")
             return ["error"]
 
-    def parse_real_products(self, max_results):
-        """Парсинг реальных товаров с Яндекс Маркета"""
+    def parse_ggsel_products(self, max_results):
+        """Парсинг товаров с GGsel"""
         products = []
         
         try:
             # Получаем весь HTML страницы
             soup = BeautifulSoup(self.driver.page_source, 'html.parser')
             
-            # Ищем карточки товаров - основные селекторы Яндекс Маркета 2024
+            # Ищем карточки товаров на GGsel
             product_selectors = [
-                '[data-zone-name="snippet"]',
-                '[data-autotest-id="product-snippet"]',
-                '.snippet-cell',
-                '.snippet-horizontal',
-                'article[data-zone-name="snippet"]',
-                'div[data-zone-name="snippet"]'
+                '.product-item',
+                '.goods-item',
+                '.item-product',
+                '[class*="product"]',
+                '[class*="goods"]',
+                '.card',
+                '.product-card'
             ]
             
             product_cards = []
@@ -220,30 +215,30 @@ class YandexMarketParser:
                     product_cards = found_cards
                     break
             
-            # Если не нашли стандартными селекторами, ищем по структуре
+            # Альтернативный поиск по структуре
             if not product_cards:
-                product_cards = soup.find_all('div', class_=lambda x: x and any(word in str(x).lower() for word in ['snippet', 'product', 'item', 'offer']))
+                product_cards = soup.find_all('div', class_=lambda x: x and any(word in str(x).lower() for word in ['product', 'goods', 'item', 'card']))
                 print(f"🔍 Альтернативный поиск: {len(product_cards)} карточек")
             
-            print(f"🛍 Всего найдено карточек: {len(product_cards)}")
+            print(f"🛍 Всего найдено карточек на GGsel: {len(product_cards)}")
             
             for i, card in enumerate(product_cards[:max_results]):
-                print(f"   Парсим карточку {i+1}...")
-                product = self.parse_product_card_advanced(card)
+                print(f"   Парсим карточку GGsel {i+1}...")
+                product = self.parse_ggsel_product_card(card)
                 if product and product['name'] and product['price'] > 0:
                     products.append(product)
-                    print(f"   ✅ Добавлен товар: {product['name'][:50]}... - {product['price']} руб.")
+                    print(f"   ✅ Добавлен товар с GGsel: {product['name'][:50]}... - {product['price']} руб.")
                 elif product:
                     print(f"   ❌ Пропущен товар: нет названия или цены")
             
             return products
             
         except Exception as e:
-            print(f"💥 Ошибка парсинга реальных товаров: {e}")
+            print(f"💥 Ошибка парсинга товаров с GGsel: {e}")
             return []
 
-    def parse_product_card_advanced(self, card):
-        """Улучшенный парсинг карточки товара"""
+    def parse_ggsel_product_card(self, card):
+        """Парсинг карточки товара с GGsel"""
         try:
             product = {
                 'name': '',
@@ -252,17 +247,19 @@ class YandexMarketParser:
                 'reviews': 0,
                 'link': '',
                 'image': '',
-                'shop': ''
+                'seller': '',
+                'platform': 'GGsel'
             }
             
             # Название товара
             name_selectors = [
                 'h3 a',
-                '.snippet-title a',
-                '[data-zone-name="title"] a',
-                'a[data-zone-name="title"]',
-                '.snippet-cell__title a',
-                'a.snippet-title'
+                '.title a',
+                '.name a',
+                '.product-title a',
+                '.goods-name a',
+                'a[class*="title"]',
+                'a[class*="name"]'
             ]
             
             for selector in name_selectors:
@@ -274,63 +271,40 @@ class YandexMarketParser:
                         if href.startswith('//'):
                             href = 'https:' + href
                         elif href.startswith('/'):
-                            href = 'https://market.yandex.ru' + href
+                            href = 'https://ggsel.com' + href
                         product['link'] = href
                     break
             
-            # Если название не нашли, ищем в других местах
-            if not product['name']:
-                # Ищем в data-атрибутах
-                name_data = card.get('data-zone-data')
-                if name_data:
-                    try:
-                        data = json.loads(name_data)
-                        if 'title' in data:
-                            product['name'] = data['title']
-                    except:
-                        pass
-            
-            # Цена - ищем в различных местах
+            # Цена
             price_selectors = [
-                '[data-zone-name="price"]',
-                '.snippet-price',
                 '.price',
-                '.snippet-cell__price',
-                '[automation-id="price"]',
-                '.snippet-price__text',
-                '.snippet-price__value'
+                '.cost',
+                '.product-price',
+                '.goods-price',
+                '[class*="price"]',
+                '.current-price',
+                '.new-price'
             ]
             
             for selector in price_selectors:
                 price_elem = card.select_one(selector)
                 if price_elem:
                     price_text = price_elem.get_text(strip=True)
-                    # Ищем число в тексте цены
-                    price_match = re.search(r'(\d[\d\s]*)', price_text.replace(' ', ''))
+                    # Ищем число в тексте цены (учитываем форматы типа "1 299 ₽", "1,299 руб." и т.д.)
+                    price_match = re.search(r'(\d[\d\s,]*)', price_text.replace(' ', '').replace(',', ''))
                     if price_match:
                         try:
-                            product['price'] = float(price_match.group(1).replace(' ', ''))
+                            product['price'] = float(price_match.group(1).replace(' ', '').replace(',', ''))
                             break
                         except ValueError:
                             continue
             
-            # Если цена не найдена, ищем в data-атрибутах
-            if product['price'] == 0:
-                price_data = card.get('data-zone-data')
-                if price_data:
-                    try:
-                        data = json.loads(price_data)
-                        if 'price' in data:
-                            product['price'] = float(data['price'])
-                    except:
-                        pass
-            
-            # Рейтинг
+            # Рейтинг (если есть на GGsel)
             rating_selectors = [
-                '[aria-label*="Рейтинг"]',
                 '.rating',
-                '.snippet-rating',
-                '[data-zone-name="rating"]'
+                '.stars',
+                '[class*="rating"]',
+                '.product-rating'
             ]
             
             for selector in rating_selectors:
@@ -345,43 +319,27 @@ class YandexMarketParser:
                         except ValueError:
                             continue
             
-            # Количество отзывов
-            reviews_selectors = [
-                '[data-zone-name="review"]',
-                '.snippet-rating__reviews',
-                '.rating__reviews'
+            # Продавец
+            seller_selectors = [
+                '.seller',
+                '.shop',
+                '.store',
+                '[class*="seller"]',
+                '[class*="shop"]'
             ]
             
-            for selector in reviews_selectors:
-                reviews_elem = card.select_one(selector)
-                if reviews_elem:
-                    reviews_text = reviews_elem.get_text(strip=True)
-                    reviews_match = re.search(r'(\d+)', reviews_text)
-                    if reviews_match:
-                        try:
-                            product['reviews'] = int(reviews_match.group(1))
-                            break
-                        except ValueError:
-                            continue
-            
-            # Магазин
-            shop_selectors = [
-                '[data-zone-name="shop"]',
-                '.snippet-shop',
-                '.shop-name'
-            ]
-            
-            for selector in shop_selectors:
-                shop_elem = card.select_one(selector)
-                if shop_elem:
-                    product['shop'] = shop_elem.get_text(strip=True)
+            for selector in seller_selectors:
+                seller_elem = card.select_one(selector)
+                if seller_elem:
+                    product['seller'] = seller_elem.get_text(strip=True)
                     break
             
             # Изображение
             img_selectors = [
                 'img',
-                '.snippet-image img',
-                '[data-zone-name="picture"] img'
+                '.product-image img',
+                '.goods-image img',
+                '[class*="image"] img'
             ]
             
             for selector in img_selectors:
@@ -391,6 +349,8 @@ class YandexMarketParser:
                     if src:
                         if src.startswith('//'):
                             src = 'https:' + src
+                        elif src.startswith('/'):
+                            src = 'https://ggsel.com' + src
                         product['image'] = src
                         break
             
@@ -401,59 +361,59 @@ class YandexMarketParser:
             return product
             
         except Exception as e:
-            print(f"💥 Ошибка парсинга карточки: {e}")
+            print(f"💥 Ошибка парсинга карточки GGsel: {e}")
             return None
 
     def get_product_price(self, product_url):
-        """Получение реальной цены товара по ссылке"""
+        """Получение цены товара по ссылке с GGsel"""
         if not self.driver:
             return 0
             
         try:
-            print(f"💰 Получаю реальную цену для: {product_url}")
+            print(f"💰 Получаю цену с GGsel для: {product_url}")
             
             if not product_url.startswith('http'):
-                product_url = 'https://market.yandex.ru' + product_url
+                product_url = 'https://ggsel.com' + product_url
             
             self.driver.get(product_url)
-            time.sleep(6)
+            time.sleep(4)
             
             # Сохраняем для отладки
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.save_debug_screenshot(f"price_{timestamp}.png")
-            self.save_debug_html(f"price_{timestamp}.html")
+            self.save_debug_screenshot(f"ggsel_price_{timestamp}.png")
+            self.save_debug_html(f"ggsel_price_{timestamp}.html")
             
             # Парсим цену со страницы товара
             soup = BeautifulSoup(self.driver.page_source, 'html.parser')
             
-            # Ищем цену в различных местах
+            # Ищем цену в различных местах на GGsel
             price_selectors = [
-                '[data-zone-name="price"]',
                 '.price',
-                '[automation-id="price"]',
-                '.snippet-price',
-                '.product-price__value',
-                '.product-price__current'
+                '.product-price',
+                '.current-price',
+                '.goods-price',
+                '[class*="price"]',
+                '.cost'
             ]
             
             for selector in price_selectors:
                 price_elem = soup.select_one(selector)
                 if price_elem:
                     price_text = price_elem.get_text(strip=True)
-                    price_match = re.search(r'(\d[\d\s]*)', price_text.replace(' ', ''))
+                    price_match = re.search(r'(\d[\d\s,]*)', price_text.replace(' ', '').replace(',', ''))
                     if price_match:
                         try:
-                            price = float(price_match.group(1).replace(' ', ''))
-                            print(f"✅ Найдена реальная цена: {price} руб.")
+                            price = float(price_match.group(1).replace(' ', '').replace(',', ''))
+                            print(f"✅ Найдена цена на GGsel: {price} руб.")
                             return price
                         except ValueError:
                             continue
             
-            print("❌ Цена не найдена на странице товара")
+            print("❌ Цена не найдена на странице товара GGsel")
             return 0
             
         except Exception as e:
-            print(f"💥 Ошибка получения реальной цены: {e}")
+            print(f"💥 Ошибка получения цены с GGsel: {e}")
             return 0
     
     def close(self):
@@ -462,12 +422,12 @@ class YandexMarketParser:
             self.driver.quit()
             print("✅ Браузер закрыт")
 
-# Создаем парсер
+# Создаем парсер для GGsel
 try:
-    parser = YandexMarketParser(headless=True)
-    print("✅ Парсер инициализирован в РЕАЛЬНОМ режиме")
+    parser = GGselParser(headless=True)
+    print("✅ Парсер GGsel инициализирован")
 except Exception as e:
-    print(f"❌ Ошибка инициализации парсера: {e}")
+    print(f"❌ Ошибка инициализации парсера GGsel: {e}")
     parser = None
 
 # Команда /start
@@ -476,30 +436,30 @@ def send_welcome(message):
     user = message.from_user
     register_user(user.id, user.username, user.first_name, user.last_name)
     
-    status_text = "⚡ РЕАЛЬНЫЙ РЕЖИМ - работает настоящий поиск!" if parser and parser.driver else "⚠️ ДЕМО-РЕЖИМ - проблемы с браузером"
+    status_text = "⚡ РЕАЛЬНЫЙ РЕЖИМ - работает парсинг GGsel!" if parser and parser.driver else "⚠️ ДЕМО-РЕЖИМ - проблемы с браузером"
     
     welcome_text = f"""
  Привет, {user.first_name}!
 
-Я бот для мониторинга цен на Яндекс Маркете.
+Я бот для мониторинга цен на GGsel.com - маркетплейсе игровых товаров.
 
 {status_text}
 
  Что я умею:
-• Искать товары на Яндекс Маркете
+• Искать товары на GGsel (игры, ключи, аккаунты)
 • Отслеживать изменение цен
 • Уведомлять о скидках
 • Показывать историю цен
 
  Основные команды:
-/search - Найти товар
+/search - Найти товар на GGsel
 /add - Добавить товар для отслеживания
 /my_products - Мои товары
 /check - Проверить цены
 /help - Помощь
 /debug - Диагностика парсера
 
-💡 Бот использует реальный браузер для поиска!
+💡 Бот использует реальный браузер для поиска на GGsel!
     """
     
     bot.send_message(message.chat.id, welcome_text)
@@ -526,7 +486,7 @@ def send_help(message):
     help_text = f"""
 Доступные команды:
 
-/search - Поиск товаров на Яндекс Маркете
+/search - Поиск товаров на GGsel
 /add - Добавить товар для отслеживания
 /my_products - Показать отслеживаемые товары
 /check - Проверить актуальные цены
@@ -534,14 +494,13 @@ def send_help(message):
 
 {status_text}
 
-⚡ Реальный парсинг через Selenium:
-• Находит настоящие товары
+⚡ Парсинг через Selenium:
+• Находит товары на GGsel.com
 • Получает актуальные цены
-• Показывает рейтинги и отзывы
-• Сохраняет скриншоты для отладки
+• Работает с играми, ключами, аккаунтами
 
 Как использовать:
-1. Используйте /search для поиска товара
+1. Используйте /search для поиска товара на GGsel
 2. Скопируйте ссылку на понравившийся товар
 3. Используйте /add чтобы добавить товар для отслеживания
 4. Укажите желаемую цену
@@ -556,7 +515,7 @@ def send_help(message):
 @bot.message_handler(commands=['debug'])
 def debug_parser(message):
     """Диагностика работы парсера"""
-    bot.send_message(message.chat.id, "🔧 Запускаю диагностику реального парсера...")
+    bot.send_message(message.chat.id, "🔧 Запускаю диагностику парсера GGsel...")
     
     if not parser or not parser.driver:
         bot.send_message(message.chat.id, 
@@ -567,33 +526,29 @@ def debug_parser(message):
     bot.send_message(message.chat.id, 
                    "✅ Selenium доступен\n"
                    "🌐 Браузер запущен\n"
-                   "🔍 Тестируем реальный поиск...")
+                   "🔍 Тестируем поиск на GGsel...")
     
-    # Тестовый запрос
-    test_queries = ["iPhone 15", "ноутбук Asus", "телевизор Samsung"]
+    # Тестовый запрос для GGsel
+    test_queries = ["Steam", "Fortnite", "Minecraft"]
     
     for query in test_queries:
-        bot.send_message(message.chat.id, f"🔍 Тестируем реальный поиск: '{query}'")
+        bot.send_message(message.chat.id, f"🔍 Тестируем поиск на GGsel: '{query}'")
         
         products = parser.search_products(query, max_results=2)
         
         if isinstance(products, list) and len(products) > 0 and isinstance(products[0], str):
             error_msg = products[0]
-            if error_msg == "captcha":
-                bot.send_message(message.chat.id, 
-                               f"❌ '{query}': Обнаружена капча\n\n"
-                               "📸 Скриншот сохранен в debug_pages/")
-            elif error_msg == "selenium_error":
+            if error_msg == "selenium_error":
                 bot.send_message(message.chat.id, f"❌ '{query}': Ошибка Selenium")
             else:
                 bot.send_message(message.chat.id, f"❌ '{query}': Ошибка - {error_msg}")
         elif products:
-            bot.send_message(message.chat.id, f"✅ '{query}': Найдено {len(products)} реальных товаров")
+            bot.send_message(message.chat.id, f"✅ '{query}': Найдено {len(products)} товаров на GGsel")
             for product in products[:1]:
                 price_text = f"{product['price']} руб." if product['price'] > 0 else "цена не найдена"
-                rating_text = f", рейтинг: {product['rating']}" if product['rating'] > 0 else ""
+                seller_text = f", продавец: {product['seller']}" if product.get('seller') else ""
                 bot.send_message(message.chat.id, 
-                               f"Пример: {product['name'][:60]}...\nЦена: {price_text}{rating_text}")
+                               f"Пример: {product['name'][:60]}...\nЦена: {price_text}{seller_text}")
         else:
             bot.send_message(message.chat.id, f"❌ '{query}': Товары не найдены")
         
@@ -601,14 +556,14 @@ def debug_parser(message):
     
     bot.send_message(message.chat.id, 
                     "📊 Диагностика завершена.\n"
-                    "📸 Скриншоты и HTML сохранены в папке debug_pages/\n"
+                    "📸 Скриншоты и HTML сохранены в папке debug_pages_ggsel/\n"
                     "👀 Вы можете посмотреть что видит браузер!")
 
 # Обработка текстовых сообщений
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
     if message.text == 'Поиск товара':
-        bot.send_message(message.chat.id, "Введите название товара для поиска:")
+        bot.send_message(message.chat.id, "Введите название товара для поиска на GGsel:")
         bot.register_next_step_handler(message, process_search_query)
     
     elif message.text == 'Мои товары':
@@ -629,7 +584,7 @@ def handle_text(message):
 # Поиск товаров
 @bot.message_handler(commands=['search'])
 def search_products(message):
-    bot.send_message(message.chat.id, "Введите название товара для поиска на Яндекс Маркете:")
+    bot.send_message(message.chat.id, "Введите название товара для поиска на GGsel:")
     bot.register_next_step_handler(message, process_search_query)
 
 def process_search_query(message):
@@ -643,7 +598,7 @@ def process_search_query(message):
                        "❌ Парсер не доступен. Используйте /debug для диагностики.")
         return
     
-    bot.send_message(message.chat.id, f"🔍 Ищу '{query}' на Яндекс Маркете...\n⚡ Использую реальный браузер...")
+    bot.send_message(message.chat.id, f"🔍 Ищу '{query}' на GGsel...\n⚡ Использую реальный браузер...")
     
     try:
         products = parser.search_products(query, max_results=5)
@@ -651,13 +606,7 @@ def process_search_query(message):
         # Обработка специальных случаев
         if isinstance(products, list) and products and isinstance(products[0], str):
             error_type = products[0]
-            if error_type == "captcha":
-                bot.send_message(message.chat.id, 
-                               "⚠️ Обнаружена капча!\n\n"
-                               "📸 Скриншот сохранен в debug_pages/\n"
-                               "🔄 Попробуйте позже или используйте другой запрос")
-                return
-            elif error_type == "selenium_error":
+            if error_type == "selenium_error":
                 bot.send_message(message.chat.id, "❌ Ошибка браузера. Используйте /debug")
                 return
             else:
@@ -666,17 +615,17 @@ def process_search_query(message):
         
         if not products:
             bot.send_message(message.chat.id, 
-                           "❌ Товары не найдены.\n\n"
+                           "❌ Товары не найдены на GGsel.\n\n"
                            "Возможные причины:\n"
                            "• Неправильный запрос\n"
                            "• Проблемы с сайтом\n"
-                           "• Блокировка\n"
+                           "• Товара нет в наличии\n"
                            "📸 Скриншоты сохранены для анализа")
             return
         
         # Отправляем найденные товары
         for i, product in enumerate(products, 1):
-            product_text = format_product_info(product, i)
+            product_text = format_ggsel_product_info(product, i)
             
             # Если есть изображение, отправляем фото с описанием
             if product.get('image') and product['image'].startswith('http'):
@@ -695,18 +644,18 @@ def process_search_query(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"💥 Произошла ошибка при поиске: {str(e)}")
 
-def format_product_info(product, number=1):
-    """Форматирование информации о товаре"""
+def format_ggsel_product_info(product, number=1):
+    """Форматирование информации о товаре с GGsel"""
     rating_text = f"⭐ {product['rating']}" if product['rating'] > 0 else "⭐ Нет оценок"
-    reviews_text = f"📝 {product['reviews']} отзывов" if product['reviews'] > 0 else "📝 Нет отзывов"
-    shop_text = f"🏪 {product['shop']}" if product.get('shop') else "🏪 Магазин не указан"
+    seller_text = f"🏪 {product['seller']}" if product.get('seller') else "🏪 Продавец не указан"
+    platform_text = f"🎮 {product.get('platform', 'GGsel')}"
     
     return f"""
-<b>Товар #{number}</b>
+<b>Товар #{number} - {platform_text}</b>
 <b>{product['name']}</b>
 💰 <b>Цена: {product['price']:,} ₽</b>
-{rating_text} | {reviews_text}
-{shop_text}
+{rating_text}
+{seller_text}
 🔗 <a href="{product['link']}">Ссылка на товар</a>
     """.replace(',', ' ')
 
@@ -718,18 +667,18 @@ def add_product(message):
         return
         
     bot.send_message(message.chat.id, 
-                    "Пришлите ссылку на товар с Яндекс Маркета\n\n"
+                    "Пришлите ссылку на товар с GGsel\n\n"
                     "Пример:\n"
-                    "https://market.yandex.ru/product/123456789\n"
+                    "https://ggsel.com/...\n"
                     "или\n"
-                    "https://market.yandex.ru/product--noutbuk/123456789")
+                    "https://ggsel.net/...")
     bot.register_next_step_handler(message, process_product_url)
 
 def process_product_url(message):
     url = message.text.strip()
     
-    if 'market.yandex.ru' not in url:
-        bot.send_message(message.chat.id, "Это не ссылка на Яндекс Маркет. Попробуйте еще раз.")
+    if 'ggsel' not in url:
+        bot.send_message(message.chat.id, "Это не ссылка на GGsel. Попробуйте еще раз.")
         return
     
     # Получаем информацию о товаре
@@ -743,18 +692,18 @@ def process_product_url(message):
                         "Возможные причины:\n"
                         "• Товар временно недоступен\n"
                         "• Изменилась структура сайта\n"
-                        "• Капча или блокировка\n"
+                        "• Товар снят с продажи\n"
                         "📸 Скриншот сохранен для анализа")
         return
     
-    # Получаем название товара
-    product_name = f"Товар с Яндекс Маркета ({current_price} руб.)"
+    # Получаем название товара (упрощенно)
+    product_name = f"Товар с GGsel ({current_price} руб.)"
     
     # Сохраняем URL и запрашиваем целевую цену
     bot.send_message(message.chat.id, 
                     f"💰 Текущая цена: {current_price} ₽\n\n"
                     f"🎯 Укажите целевую цену (в рублях):\n"
-                    f"Пример: 5000")
+                    f"Пример: 500")
     bot.register_next_step_handler(message, process_target_price, url, product_name, current_price)
 
 def process_target_price(message, product_url, product_name, current_price):
@@ -766,7 +715,7 @@ def process_target_price(message, product_url, product_name, current_price):
             return
         
         # Сохраняем в базу данных
-        conn = sqlite3.connect('yandex_market.db')
+        conn = sqlite3.connect('ggsel_market.db')
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -788,14 +737,14 @@ def process_target_price(message, product_url, product_name, current_price):
                         f"Бот будет уведомлять вас при изменении цены!")
         
     except ValueError:
-        bot.send_message(message.chat.id, "Неверный формат цены. Введите число (например: 5000)")
+        bot.send_message(message.chat.id, "Неверный формат цены. Введите число (например: 500)")
 
 # Показать товары пользователя
 @bot.message_handler(commands=['my_products'])
 def show_user_products(message):
     user_id = message.from_user.id
     
-    conn = sqlite3.connect('yandex_market.db')
+    conn = sqlite3.connect('ggsel_market.db')
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -820,7 +769,7 @@ def show_user_products(message):
         status = "🎉 Цена достигнута!" if current_price <= target_price else "⏳ Ожидание"
         
         product_info = f"""
-<b>Товар #{product_id}</b>
+<b>Товар #{product_id} - GGsel</b>
 {name}
 💰 Текущая цена: <b>{current_price:,} ₽</b>
 🎯 Целевая цена: <b>{target_price:,} ₽</b>
@@ -850,7 +799,7 @@ def handle_callback(call):
 
 def check_single_product(message, product_id):
     """Проверка одного товара"""
-    conn = sqlite3.connect('yandex_market.db')
+    conn = sqlite3.connect('ggsel_market.db')
     cursor = conn.cursor()
     
     cursor.execute('SELECT product_url, current_price, product_name, target_price FROM products WHERE id = ?', (product_id,))
@@ -901,7 +850,7 @@ def check_single_product(message, product_id):
 
 def delete_product(message, product_id):
     """Удаление товара из отслеживания"""
-    conn = sqlite3.connect('yandex_market.db')
+    conn = sqlite3.connect('ggsel_market.db')
     cursor = conn.cursor()
     
     cursor.execute('UPDATE products SET is_active = FALSE WHERE id = ?', (product_id,))
@@ -919,9 +868,9 @@ def check_prices_now(message):
         bot.send_message(message.chat.id, "❌ Парсер не доступен. Используйте /debug для диагностики.")
         return
         
-    bot.send_message(message.chat.id, "🔍 Проверяю цены всех товаров...")
+    bot.send_message(message.chat.id, "🔍 Проверяю цены всех товаров на GGsel...")
     
-    conn = sqlite3.connect('yandex_market.db')
+    conn = sqlite3.connect('ggsel_market.db')
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -984,13 +933,13 @@ def check_prices_now(message):
 def background_price_checker():
     def job():
         try:
-            print(f"\n🕒 Автоматическая проверка цен: {datetime.now()}")
+            print(f"\n🕒 Автоматическая проверка цен на GGsel: {datetime.now()}")
             
             if not parser or not parser.driver:
                 print("❌ Парсер не доступен для фоновой проверки")
                 return
                 
-            conn = sqlite3.connect('yandex_market.db')
+            conn = sqlite3.connect('ggsel_market.db')
             cursor = conn.cursor()
             
             cursor.execute('SELECT DISTINCT user_id FROM products WHERE is_active = TRUE')
@@ -1043,10 +992,10 @@ def background_price_checker():
             conn.commit()
             conn.close()
             
-            print(f"✅ Автоматическая проверка завершена. Обновлено: {total_updated} цен")
+            print(f"✅ Автоматическая проверка на GGsel завершена. Обновлено: {total_updated} цен")
             
         except Exception as e:
-            print(f"💥 Ошибка в фоновой задаче: {e}")
+            print(f"💥 Ошибка в фоновой задаче GGsel: {e}")
     
     # Запускаем проверку каждые 6 часов
     schedule.every(6).hours.do(job)
@@ -1066,26 +1015,26 @@ import atexit
 @atexit.register
 def cleanup():
     """Очистка при завершении работы"""
-    print("🔄 Завершение работы...")
+    print("🔄 Завершение работы GGsel бота...")
     if parser:
         parser.close()
 
 # Главная функция
 if __name__ == '__main__':
-    print("🚀 Запуск бота мониторинга Яндекс Маркета...")
-    print("⚡ РЕАЛЬНЫЙ РЕЖИМ - настоящий парсинг через Selenium!")
-    print("📸 Скриншоты будут сохраняться в папку debug_pages/")
+    print("🚀 Запуск бота мониторинга GGsel...")
+    print("⚡ РЕЖИМ - парсинг через Selenium!")
+    print("📸 Скриншоты будут сохраняться в папку debug_pages_ggsel/")
     
     # Создаем папку для отладки
-    if not os.path.exists("debug_pages"):
-        os.makedirs("debug_pages")
+    if not os.path.exists("debug_pages_ggsel"):
+        os.makedirs("debug_pages_ggsel")
     
     init_db()
     start_background_jobs()
     
     if parser and parser.driver:
-        print("✅ Бот запущен в РЕАЛЬНОМ режиме!")
-        print("🔍 Парсер готов к поиску товаров")
+        print("✅ Бот GGsel запущен!")
+        print("🔍 Парсер готов к поиску товаров на GGsel")
     else:
         print("⚠️ Бот запущен с ограниченным функционалом")
         print("💡 Используйте /debug для диагностики")
@@ -1095,7 +1044,7 @@ if __name__ == '__main__':
     try:
         bot.infinity_polling()
     except KeyboardInterrupt:
-        print("⏹ Остановка бота...")
+        print("⏹ Остановка GGsel бота...")
     finally:
         if parser:
             parser.close()
