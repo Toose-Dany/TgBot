@@ -1,8 +1,6 @@
 Services:
   botervice:
-    stop_grace_period:
-    stop_signal:
-    container_name: bot-price
+    container_name: TgBot
     build:
-      context:
+      context: .
       dockerfile: ./Dockerfile
