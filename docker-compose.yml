@@ -1,8 +1,8 @@
 Services:
   botervice:
-    stop_grace_period: 30s
-    stop_signal: SIGTERM
-    container_name: bot-api
+    stop_grace_period:
+    stop_signal:
+    container_name: bot-price
     build:
       context:
       dockerfile: ./Dockerfile
