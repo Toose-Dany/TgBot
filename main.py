@@ -14,7 +14,7 @@ import json
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Токен бота (получите у @BotFather)
-BOT_TOKEN = "8406426014:AAHSvck3eXH6p8J34q7HID2A-ZoPXfaHbag"
+BOT_TOKEN = ""
 
 # Создание бота
 bot = telebot.TeleBot(BOT_TOKEN)
