@@ -229,6 +229,25 @@ def add_product(message):
             bot.reply_to(message, "❌ Пожалуйста, используйте ссылки только с сайтов GGsel:\n- ggsel.net\n- ggsel.com\n- ggsell.net")
             return
         
+        # Проверяем, не отслеживается ли уже эта ссылка
+        conn = sqlite3.connect('ggsel_monitor.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, product_name FROM tracked_products 
+            WHERE user_id = ? AND product_url = ?
+        ''', (message.chat.id, url))
+        
+        existing_product = cursor.fetchone()
+        
+        if existing_product:
+            conn.close()
+            product_id, product_name = existing_product
+            bot.reply_to(message, f"❌ Этот товар уже отслеживается!\n\n📦 {product_name}\n🆔 ID: {product_id}\n\nИспользуйте /list для просмотра всех товаров.")
+            return
+        
+        conn.close()
+        
         # Показываем сообщение о начале обработки
         processing_msg = bot.reply_to(message, "⏳ Получаю информацию о товаре...")
         
@@ -263,7 +282,7 @@ def add_product(message):
         conn.commit()
         conn.close()
         
-        bot.reply_to(message, f"✅ Товар добавлен!\n📦 Название: {name}\n💰 Цена: {price} руб.\n🕒 Отслеживание начато!")
+        bot.reply_to(message, f"✅ Товар добавлен!\n📦 Название: {name}\n🔗 {url}\n💰 Цена: {price} руб.\n🕒 Отслеживание начато!")
         
     except Exception as e:
         logging.error(f"Ошибка при добавлении товара: {e}")
@@ -278,6 +297,25 @@ def quick_add_product(message):
         # Проверяем, что это действительно ссылка
         if not url.startswith('http'):
             return
+        
+        # Проверяем, не отслеживается ли уже эта ссылка
+        conn = sqlite3.connect('ggsel_monitor.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, product_name FROM tracked_products 
+            WHERE user_id = ? AND product_url = ?
+        ''', (message.chat.id, url))
+        
+        existing_product = cursor.fetchone()
+        
+        if existing_product:
+            conn.close()
+            product_id, product_name = existing_product
+            bot.reply_to(message, f"❌ Этот товар уже отслеживается!\n\n📦 {product_name}\n🆔 ID: {product_id}\n\nИспользуйте /list для просмотра всех товаров.")
+            return
+        
+        conn.close()
         
         # Показываем сообщение о начале обработки
         processing_msg = bot.reply_to(message, "⏳ Получаю информацию о товаре...")
@@ -313,14 +351,11 @@ def quick_add_product(message):
         conn.commit()
         conn.close()
         
-        bot.reply_to(message, f"✅ Товар добавлен!\n📦 Название: {name}\n💰 Цена: {price} руб.\n🕒 Отслеживание начато!")
+        bot.reply_to(message, f"✅ Товар добавлен!\n📦 Название: {name}\n🔗 {url}\n💰 Цена: {price} руб.\n🕒 Отслеживание начато!")
         
     except Exception as e:
         logging.error(f"Ошибка при быстром добавлении товара: {e}")
         bot.reply_to(message, "❌ Произошла ошибка при добавлении товара.")
-
-# Остальные функции остаются без изменений (list, check, remove, auto_check_prices, etc.)
-# ... [остальной код без изменений] ...
 
 # Показать список отслеживаемых товаров
 @bot.message_handler(commands=['list'])
@@ -330,7 +365,7 @@ def list_products(message):
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT id, product_name, current_price, last_check 
+            SELECT id, product_name, current_price, last_check, product_url 
             FROM tracked_products 
             WHERE user_id = ?
         ''', (message.chat.id,))
@@ -344,7 +379,7 @@ def list_products(message):
         
         response = "📋 Ваши отслеживаемые товары:\n\n"
         for product in products:
-            product_id, name, price, last_check = product
+            product_id, name, price, last_check, product_url = product
             # Обрабатываем разные форматы timestamp
             try:
                 if '.' in last_check:
@@ -354,10 +389,33 @@ def list_products(message):
             except:
                 last_check_formatted = last_check
             
-            response += f"🆔 ID: {product_id}\n📦 {name}\n💰 {price} руб.\n🕒 Последняя проверка: {last_check_formatted}\n\n"
+            response += f"🆔 ID: {product_id}\n📦 {name}\n💰 {price} руб.\n🔗 {product_url}\n🕒 Последняя проверка: {last_check_formatted}\n\n"
         
         response += "ℹ️ Используйте /check <ID> для проверки цены или /remove <ID> для удаления."
-        bot.reply_to(message, response)
+        
+        # Если сообщение слишком длинное, разбиваем на части
+        if len(response) > 4096:
+            parts = []
+            current_part = ""
+            lines = response.split('\n')
+            
+            for line in lines:
+                if len(current_part) + len(line) + 1 < 4096:
+                    current_part += line + '\n'
+                else:
+                    parts.append(current_part)
+                    current_part = line + '\n'
+            
+            if current_part:
+                parts.append(current_part)
+            
+            for i, part in enumerate(parts):
+                if i == 0:
+                    bot.reply_to(message, part)
+                else:
+                    bot.send_message(message.chat.id, part)
+        else:
+            bot.reply_to(message, response)
         
     except Exception as e:
         logging.error(f"Ошибка при получении списка товаров: {e}")
@@ -426,7 +484,7 @@ def check_product(message):
             change_emoji = "⚪"
             change_text = "💎 Цена не изменилась"
         
-        response = f"📊 Актуальная информация:\n\n📦 {name}\n💰 Цена: {new_price} руб.\n{change_emoji} {change_text}"
+        response = f"📊 Актуальная информация:\n\n📦 {name}\n🔗 {url}\n💰 Цена: {new_price} руб.\n{change_emoji} {change_text}"
         bot.reply_to(message, response)
         
     except Exception as e:
@@ -446,6 +504,21 @@ def remove_product(message):
         conn = sqlite3.connect('ggsel_monitor.db')
         cursor = conn.cursor()
         
+        # Получаем информацию о товаре перед удалением
+        cursor.execute('''
+            SELECT product_name, product_url FROM tracked_products 
+            WHERE id = ? AND user_id = ?
+        ''', (product_id, message.chat.id))
+        
+        product = cursor.fetchone()
+        
+        if not product:
+            conn.close()
+            bot.reply_to(message, "❌ Товар с таким ID не найден.")
+            return
+        
+        product_name, product_url = product
+        
         cursor.execute('''
             DELETE FROM tracked_products 
             WHERE id = ? AND user_id = ?
@@ -459,7 +532,7 @@ def remove_product(message):
         conn.commit()
         conn.close()
         
-        bot.reply_to(message, f"✅ Товар с ID {product_id} удален из отслеживания.")
+        bot.reply_to(message, f"✅ Товар удален из отслеживания!\n\n📦 {product_name}\n🔗 {product_url}\n🆔 ID: {product_id}")
         
     except Exception as e:
         logging.error(f"Ошибка при удалении товара: {e}")
@@ -489,7 +562,7 @@ def auto_check_prices():
                     change_emoji = "🔴" 
                     change_text = f"выросла на {price_change:.2f} руб."
                 
-                message = f"{change_emoji} Цена изменилась!\n\n📦 {name}\n💰 Было: {old_price} руб.\n💰 Стало: {new_price} руб.\n📊 {change_text}"
+                message = f"{change_emoji} Цена изменилась!\n\n📦 {name}\n🔗 {url}\n💰 Было: {old_price} руб.\n💰 Стало: {new_price} руб.\n📊 {change_text}"
                 
                 try:
                     bot.send_message(user_id, message)
