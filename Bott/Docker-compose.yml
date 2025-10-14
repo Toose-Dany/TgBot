@@ -1,0 +1,6 @@
+services:
+  botervice:
+    container_name: TgBot
+    build:
+      context: .
+      dockerfile: ./Dockerfile
