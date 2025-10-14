@@ -13,7 +13,7 @@ import json
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Токен бота (получите у @BotFather)
+# Токен бота 
 BOT_TOKEN = "8406426014:AAHSvck3eXH6p8J34q7HID2A-ZoPXfaHbag"
 
 # Создание бота
@@ -176,6 +176,7 @@ def send_welcome(message):
 /add <url> - Добавить товар для отслеживания
 /list - Показать отслеживаемые товары
 /check <id> - Проверить цену конкретного товара
+/check_all - Проверить цены всех товаров
 /remove <id> - Удалить товар из отслеживания
 /help - Показать справку
 
@@ -198,8 +199,9 @@ def send_help(message):
 2. Для просмотра всех отслеживаемых товаров:
    - Используйте команду /list
 
-3. Чтобы проверить цену конкретного товара:
-   - Используйте команду /check <ID товара>
+3. Чтобы проверить цены товаров:
+   - /check <ID товара> - проверить конкретный товар
+   - /check_all - проверить все товары сразу
 
 4. Чтобы удалить товар из отслеживания:
    - Используйте команду /remove <ID товара>
@@ -208,6 +210,7 @@ def send_help(message):
 /add https://ggsel.net/example-product
 /list
 /check 1
+/check_all
 /remove 1
     """
     bot.reply_to(message, help_text)
@@ -391,7 +394,7 @@ def list_products(message):
             
             response += f"🆔 ID: {product_id}\n📦 {name}\n💰 {price} руб.\n🔗 {product_url}\n🕒 Последняя проверка: {last_check_formatted}\n\n"
         
-        response += "ℹ️ Используйте /check <ID> для проверки цены или /remove <ID> для удаления."
+        response += "ℹ️ Используйте:\n/check <ID> - проверить один товар\n/check_all - проверить все товары\n/remove <ID> - удалить товар"
         
         # Если сообщение слишком длинное, разбиваем на части
         if len(response) > 4096:
@@ -426,7 +429,12 @@ def list_products(message):
 def check_product(message):
     try:
         if len(message.text.split()) < 2:
-            bot.reply_to(message, "❌ Пожалуйста, укажите ID товара.\nПример: /check 1")
+            bot.reply_to(message, "❌ Пожалуйста, укажите ID товара.\nПример: /check 1\n\nИли используйте /check_all для проверки всех товаров.")
+            return
+        
+        # Проверяем, не хочет ли пользователь проверить все товары
+        if message.text.split()[1].lower() == 'all':
+            check_all_products(message)
             return
         
         product_id = int(message.text.split()[1])
@@ -449,12 +457,21 @@ def check_product(message):
         
         url, name, old_price = product
         
+        # Показываем сообщение о начале проверки
+        processing_msg = bot.reply_to(message, f"⏳ Проверяю цену для товара:\n{name}")
+        
         # Получаем актуальную цену
         new_price, _ = get_ggsel_price(url)
         
+        # Удаляем сообщение о обработке
+        try:
+            bot.delete_message(message.chat.id, processing_msg.message_id)
+        except:
+            pass
+        
         if new_price is None:
             conn.close()
-            bot.reply_to(message, "❌ Не удалось получить актуальную цену.")
+            bot.reply_to(message, f"❌ Не удалось получить актуальную цену для товара:\n{name}")
             return
         
         # Обновляем цену в базе
@@ -490,6 +507,144 @@ def check_product(message):
     except Exception as e:
         logging.error(f"Ошибка при проверке товара: {e}")
         bot.reply_to(message, "❌ Произошла ошибка при проверке товара.")
+
+# Проверить все товары
+@bot.message_handler(commands=['check_all'])
+def check_all_products(message):
+    try:
+        conn = sqlite3.connect('ggsel_monitor.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, product_url, product_name, current_price 
+            FROM tracked_products 
+            WHERE user_id = ?
+        ''', (message.chat.id,))
+        
+        products = cursor.fetchall()
+        conn.close()
+        
+        if not products:
+            bot.reply_to(message, "📭 У вас нет отслеживаемых товаров.")
+            return
+        
+        total_products = len(products)
+        processed = 0
+        updated = 0
+        errors = 0
+        
+        # Отправляем сообщение о начале проверки
+        progress_msg = bot.reply_to(message, f"🔄 Начинаю проверку {total_products} товаров...\n\n⏳ Обработано: 0/{total_products}")
+        
+        results = []
+        
+        for product in products:
+            product_id, url, name, old_price = product
+            processed += 1
+            
+            try:
+                # Обновляем сообщение о прогрессе
+                try:
+                    bot.edit_message_text(
+                        f"🔄 Проверяю товары...\n\n⏳ Обработано: {processed}/{total_products}",
+                        message.chat.id,
+                        progress_msg.message_id
+                    )
+                except:
+                    pass
+                
+                # Получаем актуальную цену
+                new_price, _ = get_ggsel_price(url)
+                
+                if new_price is not None:
+                    # Обновляем базу данных
+                    conn = sqlite3.connect('ggsel_monitor.db')
+                    cursor = conn.cursor()
+                    
+                    cursor.execute('''
+                        UPDATE tracked_products 
+                        SET current_price = ?, last_check = ? 
+                        WHERE id = ?
+                    ''', (new_price, datetime.now(), product_id))
+                    
+                    cursor.execute('''
+                        INSERT INTO price_history (product_url, price)
+                        VALUES (?, ?)
+                    ''', (url, new_price))
+                    
+                    conn.commit()
+                    conn.close()
+                    
+                    price_change = new_price - old_price
+                    
+                    if price_change < 0:
+                        change_emoji = "🟢"
+                        change_text = f"↓{abs(price_change):.2f} руб."
+                    elif price_change > 0:
+                        change_emoji = "🔴"
+                        change_text = f"↑{price_change:.2f} руб."
+                    else:
+                        change_emoji = "⚪"
+                        change_text = "без изменений"
+                    
+                    # Формируем результат с ссылкой
+                    result_line = f"{change_emoji} {name}\n🔗 {url}\n💰 {new_price} руб. ({change_text})"
+                    results.append(result_line)
+                    updated += 1
+                else:
+                    result_line = f"❌ {name}\n🔗 {url}\n💰 Не удалось получить цену"
+                    results.append(result_line)
+                    errors += 1
+                    
+            except Exception as e:
+                logging.error(f"Ошибка при проверке товара {product_id}: {e}")
+                result_line = f"❌ {name}\n🔗 {url}\n💰 Ошибка проверки"
+                results.append(result_line)
+                errors += 1
+        
+        # Удаляем сообщение о прогрессе
+        try:
+            bot.delete_message(message.chat.id, progress_msg.message_id)
+        except:
+            pass
+        
+        # Формируем итоговый отчет
+        summary = f"📊 Проверка завершена!\n\n"
+        summary += f"✅ Успешно: {updated} товаров\n"
+        summary += f"❌ Ошибки: {errors} товаров\n"
+        summary += f"📦 Всего: {total_products} товаров\n\n"
+        
+        # Добавляем результаты
+        if results:
+            summary += "Результаты проверки:\n\n" + "\n\n".join(results[:10])  # Ограничиваем вывод первыми 10 товарами
+        
+        # Если результатов много, разбиваем на несколько сообщений
+        if len(summary) > 4096:
+            # Отправляем сначала summary
+            summary_part = f"📊 Проверка завершена!\n\n✅ Успешно: {updated} товаров\n❌ Ошибки: {errors} товаров\n📦 Всего: {total_products} товаров\n\n"
+            summary_part += "Результаты проверки (первые 10 товаров):\n\n" + "\n\n".join(results[:10])
+            
+            if len(summary_part) > 4096:
+                summary_part = summary_part[:4090] + "..."
+            
+            bot.reply_to(message, summary_part)
+            
+            # Затем отправляем остальные результаты если есть
+            if len(results) > 10:
+                remaining_results = results[10:]
+                chunks = [remaining_results[i:i + 5] for i in range(0, len(remaining_results), 5)]
+                
+                for i, chunk in enumerate(chunks):
+                    chunk_text = f"Продолжение результатов ({i+1}/{len(chunks)}):\n\n" + "\n\n".join(chunk)
+                    if len(chunk_text) > 4096:
+                        chunk_text = chunk_text[:4090] + "..."
+                    bot.send_message(message.chat.id, chunk_text)
+        else:
+            bot.reply_to(message, summary)
+        
+    except Exception as e:
+        logging.error(f"Ошибка при проверке всех товаров: {e}")
+        bot.reply_to(message, "❌ Произошла ошибка при проверке всех товаров.")
 
 # Удалить товар из отслеживания
 @bot.message_handler(commands=['remove'])
